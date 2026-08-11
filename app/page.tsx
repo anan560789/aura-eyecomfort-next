@@ -762,9 +762,19 @@ export default function EyeComfortApp() {
         <>
           <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
           
-          <div className="absolute left-0 w-full px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10 transition-all duration-[1.2s] ease-[cubic-bezier(0.25,1,0.5,1)]" style={{ top: uiState.top, transform: 'translateY(-50%)' }}>
-            <div className="text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.4] whitespace-pre-wrap flex flex-col items-center">{uiState.title}</div>
-            <div className="text-[#00ffcc] font-mono text-[24px]">{uiState.timer}</div>
+          {/* 絕對置中容器 */}
+          <div className="absolute left-0 w-full px-5 box-border flex flex-col items-center justify-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10 transition-all duration-[1.2s] ease-[cubic-bezier(0.25,1,0.5,1)]" style={{ top: uiState.top, transform: 'translateY(-50%)' }}>
+            
+            {/* 強制文字置中 */}
+            <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] whitespace-pre-wrap">
+              {uiState.title}
+            </div>
+            
+            {/* 倒數計時置中 */}
+            <div className="w-full text-center text-[#00ffcc] font-mono text-[24px]">
+              {uiState.timer}
+            </div>
+            
             {uiState.showContinue && (
               <button onClick={() => { gameState.current.isWaitingForRightEye = false; playDingSound(); setUiState(prev => ({...prev, showContinue: false})); }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
             )}

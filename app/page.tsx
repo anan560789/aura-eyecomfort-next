@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import liff from '@line/liff';
 import { createClient } from '@supabase/supabase-js';
+// @ts-ignore (忽略 TypeScript 對 nosleep 的型別警告)
+import NoSleep from 'nosleep.js';
 
 // ==========================================
 // 1. 全域設定與 Supabase 初始化
@@ -16,10 +18,10 @@ const maxCycles = 3;
 const focusDepths = [-1, -15, -35, -60];
 const focusColors = [0xff3366, 0xff4d79, 0xff668c, 0xff809f];
 const focusTexts = [
-  "<span style='color:#FF3366;'>【極近對焦】</span>用力看清缺口方向",
-  "<span style='color:#ff4d79;'>【中近距離】</span>尋找缺口位置",
-  "<span style='color:#ff668c;'>【中遠距離】</span>嘗試辨識缺口",
-  "<span style='color:#ff809f;'>【深空極限】</span>盡力即可，請放鬆不勉強"
+  "<div style='color:#FF3366;'>【極近對焦】</div>用力看清缺口方向",
+  "<div style='color:#ff4d79;'>【中近距離】</div>尋找缺口位置",
+  "<div style='color:#ff668c;'>【中遠距離】</div>嘗試辨識缺口",
+  "<div style='color:#ff809f;'>【深空極限】</div>盡力即可，請放鬆不勉強"
 ];
 
 // 醫學原理資料庫
@@ -37,21 +39,17 @@ export default function EyeComfortApp() {
   // ==========================================
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'AD' | 'TRAINING'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
-  
-  // 用戶狀態
   const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
-  
-  // 訓練介面狀態
   const [uiState, setUiState] = useState<{ title: string | React.ReactNode, timer: string, top: string, showContinue: boolean }>({ title: '', timer: '', top: '70%', showContinue: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
 
   // ==========================================
-  // 3. 遊戲核心狀態 (使用 useRef 避免 setInterval 造成重新渲染)
+  // 3. 遊戲核心狀態
   // ==========================================
   const canvasRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<any>(null); 
   const audioRef = useRef<any>({ ctx: null, bgm: null, fadeInt: null, dipTimeout: null });
-  const wakeLockRef = useRef<any>(null); // 螢幕喚醒鎖定
+  const noSleepRef = useRef<any>(null); // 使用 NoSleep.js
   
   const gameState = useRef({
     module: 'DASHBOARD',
@@ -65,39 +63,15 @@ export default function EyeComfortApp() {
   });
 
   // ==========================================
-  // 4. 螢幕常亮控制 (Wake Lock API)
+  // 4. 螢幕常亮控制 (NoSleep.js)
   // ==========================================
   useEffect(() => {
-    const requestWakeLock = async () => {
-      try {
-        if ('wakeLock' in navigator) {
-          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
-        }
-      } catch (err) {
-        console.log('Wake Lock Error:', err);
-      }
-    };
-
-    if (currentView === 'TRAINING') {
-      requestWakeLock();
-    } else {
-      if (wakeLockRef.current) {
-        wakeLockRef.current.release().then(() => { wakeLockRef.current = null; });
-      }
-    }
-
-    const handleVisChange = () => {
-      if (document.visibilityState === 'visible' && currentView === 'TRAINING') requestWakeLock();
-    };
-    
-    document.addEventListener('visibilitychange', handleVisChange);
+    // 只有在客戶端才實例化 NoSleep
+    noSleepRef.current = new NoSleep();
     return () => {
-      document.removeEventListener('visibilitychange', handleVisChange);
-      if (wakeLockRef.current) {
-        wakeLockRef.current.release().then(() => { wakeLockRef.current = null; }).catch(()=>{});
-      }
+      if (noSleepRef.current) noSleepRef.current.disable();
     };
-  }, [currentView]);
+  }, []);
 
   // ==========================================
   // 5. 音效與 BGM 系統
@@ -410,7 +384,7 @@ export default function EyeComfortApp() {
   }, [playDingSound]);
 
   // ==========================================
-  // 9. 狀態機與倒數邏輯 
+  // 9. 狀態機與強制置中邏輯 
   // ==========================================
   const updateUI = useCallback(() => {
     const state = gameState.current;
@@ -435,10 +409,11 @@ export default function EyeComfortApp() {
     } else if (state.module === 'focus') {
       if (state.isWaitingForRightEye) setUiState({ top: '70%', title: "👁️ 左眼訓練完成！\n請換遮左眼，準備進行【右眼】重訓", timer: '', showContinue: true });
       else if (state.focusTimeLeft > 0) {
-        const eye = state.focusTimeLeft > 60 ? "👁️ 請遮住右眼，訓練【左眼】\n" : "👁️ 換遮左眼，訓練【右眼】\n";
-        setUiState({ top: '85%', title: <span dangerouslySetInnerHTML={{ __html: eye + focusTexts[state.focusStep] }} />, timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false });
+        // 使用 <div> 搭配 w-full 與 text-center 強制置中，並使用 <br/> 取代 \n
+        const eye = state.focusTimeLeft > 60 ? "👁️ 請遮住右眼，訓練【左眼】<br/><br/>" : "👁️ 換遮左眼，訓練【右眼】<br/><br/>";
+        setUiState({ top: '85%', title: <div dangerouslySetInnerHTML={{ __html: eye + focusTexts[state.focusStep] }} className="w-full text-center flex flex-col items-center justify-center" />, timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false });
       } else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false });
-      else setUiState({ top: '50%', title: <span dangerouslySetInnerHTML={{ __html: "🎯 睫狀肌幫浦重訓完成！<br><span style='font-size:18px; color:#FFD93D; line-height:1.6; display:inline-block; margin-top:15px;'>⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br>建議接著進行前四個眼睛放鬆模組。</span>" }} />, timer: '', showContinue: false });
+      else setUiState({ top: '50%', title: <div dangerouslySetInnerHTML={{ __html: "🎯 睫狀肌幫浦重訓完成！<br/><br/><span style='font-size:18px; color:#FFD93D;'>⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br/>建議接著進行前四個眼睛放鬆模組。</span>" }} className="w-full text-center flex flex-col items-center" />, timer: '', showContinue: false });
     } else if (state.module === 'amsler' || state.module === 'astigmatism') {
       if (state.testPhase === 'COMPLETED') setUiState({ top: '50%', title: "檢測完成！若有異常請檢查視力與散光度數", timer: "點擊左上角返回大廳", showContinue: false });
       else {
@@ -520,12 +495,17 @@ export default function EyeComfortApp() {
   }, [playDingSound, dipBGM, updateUI, logTraining]);
 
   // ==========================================
-  // 10. 視圖切換與按鈕處理
+  // 10. 視圖切換與按鈕處理 (綁定 NoSleep)
   // ==========================================
   const startTraining = (type: string) => {
     setActiveModule(type); setCurrentView('TRAINING');
     const state = gameState.current;
     state.module = type; state.isResting = false; state.restTimeLeft = 0;
+    
+    // 啟動防休眠機制
+    if (noSleepRef.current) {
+      noSleepRef.current.enable();
+    }
     
     if (type === 'sop') { state.cycle = 1; state.phase = 'LOOKING'; state.sopTimeLeft = 10; playBGM('/game1.mp3'); }
     else if (type === 'stretch') { state.stretchTimeLeft = 45; playBGM('/game2.mp3'); }
@@ -542,6 +522,12 @@ export default function EyeComfortApp() {
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module)) stopBGM();
     gameState.current.module = 'DASHBOARD';
     engineRef.current?.clearBalls();
+    
+    // 關閉防休眠機制
+    if (noSleepRef.current) {
+      noSleepRef.current.disable();
+    }
+    
     setCurrentView('DASHBOARD'); setActiveModule(null);
   };
 
@@ -762,19 +748,21 @@ export default function EyeComfortApp() {
         <>
           <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
           
-          {/* 絕對置中容器 */}
-          <div className="absolute left-0 w-full px-5 box-border flex flex-col items-center justify-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10 transition-all duration-[1.2s] ease-[cubic-bezier(0.25,1,0.5,1)]" style={{ top: uiState.top, transform: 'translateY(-50%)' }}>
+          <div className="absolute inset-x-0 w-full px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10 transition-all duration-[1.2s] ease-[cubic-bezier(0.25,1,0.5,1)]" style={{ top: uiState.top, transform: 'translateY(-50%)' }}>
             
-            {/* 強制文字置中 */}
-            <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] whitespace-pre-wrap">
-              {uiState.title}
+            {/* 強制置中容器 */}
+            <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] flex flex-col items-center justify-center">
+              {typeof uiState.title === 'string' ? (
+                <span className="whitespace-pre-wrap">{uiState.title}</span>
+              ) : (
+                uiState.title
+              )}
             </div>
             
-            {/* 倒數計時置中 */}
             <div className="w-full text-center text-[#00ffcc] font-mono text-[24px]">
               {uiState.timer}
             </div>
-            
+
             {uiState.showContinue && (
               <button onClick={() => { gameState.current.isWaitingForRightEye = false; playDingSound(); setUiState(prev => ({...prev, showContinue: false})); }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
             )}

@@ -224,7 +224,7 @@ export default function EyeComfortApp() {
     if (liff.isApiAvailable('shareTargetPicker')) {
       liff.shareTargetPicker([{
         type: "text",
-        text: `👁️ 彥臣數位眼科復健中心打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配醫師推薦營養配方，補充眼睛關鍵營養！\n👉 https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID || '2010891900-u4t0FhJ6'}`
+        text: `👁️ 彥臣數位眼科復健中心打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配醫師推薦營養配方，補充眼睛關鍵營養！\n👉 https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID || '2011063080-ctZUc9ij'}`
       }]).then((res) => { if (res) console.log("Shared"); }).catch((e) => alert("分享發生錯誤。"));
     }
   };
@@ -235,7 +235,7 @@ export default function EyeComfortApp() {
   useEffect(() => {
     const initLiff = async () => {
       try {
-        await liff.init({ liffId: process.env.NEXT_PUBLIC_LIFF_ID || '2010891900-u4t0FhJ6' });
+        await liff.init({ liffId: process.env.NEXT_PUBLIC_LIFF_ID || '2011063080-ctZUc9ij' });
         if (liff.isLoggedIn()) {
           const profile = await liff.getProfile();
           setLineProfile({ uid: profile.userId, name: profile.displayName });

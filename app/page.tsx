@@ -17,30 +17,33 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 const maxCycles = 3;
 const focusDepths = [-1, -15, -35, -60];
 const focusColors = [0xff3366, 0xff4d79, 0xff668c, 0xff809f];
+
 const focusTexts = [
-  "<div style='color:#FF3366;'>【極近對焦】</div>用力看清缺口方向",
-  "<div style='color:#ff4d79;'>【中近距離】</div>尋找缺口位置",
-  "<div style='color:#ff668c;'>【中遠距離】</div>嘗試辨識缺口",
-  "<div style='color:#ff809f;'>【深空極限】</div>盡力即可，請放鬆不勉強"
+  <div key="0"><span className="text-[#FF3366] font-bold">【極近對焦】</span><br/>用力看清缺口方向</div>,
+  <div key="1"><span className="text-[#ff4d79] font-bold">【中近距離】</span><br/>尋找缺口位置</div>,
+  <div key="2"><span className="text-[#ff668c] font-bold">【中遠距離】</span><br/>嘗試辨識缺口</div>,
+  <div key="3"><span className="text-[#ff809f] font-bold">【深空極限】</span><br/>盡力即可，請放鬆不勉強</div>
 ];
 
-// 醫學原理資料庫
+// ==========================================
+// 合規的日常保健學理說明 (避免宣稱療效)
+// ==========================================
 const medicalPrinciples: Record<string, any> = {
-  sop: { icon: "🚀", title: "45秒快速舒緩", color: "#FF6B6B", principle: "此模組結合了「睫狀肌放鬆」、「動態視覺刺激」與「淚膜重建」。<br><br>透過注視遠近變化的球體，能迅速解除水晶體對焦痙攣；最後的強制用力閉眼，則能擠壓眼瞼板腺均勻分泌油脂。" },
-  stretch: { icon: "🔄", title: "動態 3D 眼肌伸展", color: "#4D96FF", principle: "現代人長時間死盯著手機，導致控制眼球的「眼外肌」僵硬缺血。<br><br>本模組利用最大範圍的 ∞ 字型（無限大）極限軌跡，強迫拉伸控制眼球的六條眼外肌，促進眼周血液循環。" },
-  chaser: { icon: "🎮", title: "睫狀肌深空追光", color: "#6BCB77", principle: "利用 3D 透視原理創造出「無限遠（Optical Infinity）」的視覺錯覺。藉由死盯流星飛向最深處，能強迫睫狀肌徹底放鬆、拉長，解除深層視覺疲勞。" },
-  breathe: { icon: "🌌", title: "星雲散焦與神經放鬆", color: "#FFD93D", principle: "引導您「放寬視野、不要對焦任何單顆星星」，啟動周邊視覺（Peripheral Vision），配合深度共振呼吸法，喚醒副交感神經，達到神經級的深度重置。" },
-  focus: { icon: "🎯", title: "Z 軸遠近對焦飛梭", color: "#FF3366", principle: "這是一款「睫狀肌的幫浦重訓」。利用 Three.js 的 Z 軸深度與強烈透視，強迫睫狀肌進行極端收縮（看近）與極端放鬆（看遠）的快速切換，藉此恢復水晶體的對焦彈性。<br><br><strong style='color:#00ffcc;'>⏱️ 訓練時間：單眼各 60 秒，共需 2 分鐘。</strong><br><br><strong style='color:#FF3366;'>⚠️ 這是重新訓練眼睛聚焦能力模組，屬於較高強度的眼肌運動，如有不適請立即停止並讓眼睛休息。</strong>" }
+  sop: { icon: "🚀", title: "45秒快速舒緩", color: "#FF6B6B", principle: "此模組結合了「睫狀肌放鬆」、「動態視覺刺激」與「淚膜穩定」的保健概念。<br><br>透過注視遠近變化的球體，輔助舒緩水晶體對焦壓力；最後的用力閉眼動作，可協助眼瞼板腺分泌油脂，幫助維持淚膜水分。" },
+  stretch: { icon: "🔄", title: "動態 3D 眼肌伸展", color: "#4D96FF", principle: "現代人長時間凝視手機，容易導致眼周肌肉緊繃。<br><br>本模組利用最大範圍的 ∞ 字型（無限大）視覺軌跡，引導控制眼球的六條眼外肌進行大範圍活動，幫助眼周肌肉伸展與放鬆。" },
+  chaser: { icon: "🎮", title: "睫狀肌深空追光", color: "#6BCB77", principle: "利用 3D 透視原理創造出「光學無限遠（Optical Infinity）」的視覺錯覺。<br><br>藉由追蹤流星飛向深空，引導視線遠眺，協助睫狀肌放鬆，作為舒緩視覺疲勞的日常輔助運動。" },
+  breathe: { icon: "🌌", title: "星雲散焦與神經放鬆", color: "#FFD93D", principle: "引導您「放寬視野、不要對焦任何單顆星星」，體驗周邊視覺（Peripheral Vision）的展開。<br><br>配合深度共振呼吸法，幫助放鬆身心張力，作為舒緩日常視覺壓力的輔助。" },
+  focus: { icon: "🎯", title: "Z 軸遠近對焦飛梭", color: "#FF3366", principle: "這是一款「睫狀肌的幫浦活動」。利用 Three.js 的 Z 軸深度與透視，引導睫狀肌進行看近與看遠的交替活動，作為日常維持調節靈活度的輔助練習。<br><br><strong style='color:#00ffcc;'>⏱️ 訓練時間：單眼各 60 秒，共需 2 分鐘。</strong><br><br><strong style='color:#FF3366;'>⚠️ 這是較高強度的眼球活動模組，如有不適請立即停止並讓眼睛休息。</strong>" }
 };
 
 export default function EyeComfortApp() {
   // ==========================================
   // 2. React UI 狀態管理
   // ==========================================
-  const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'AD' | 'TRAINING'>('DASHBOARD');
+  const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_INTRO' | 'AD' | 'TRAINING'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
   const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
-  const [uiState, setUiState] = useState<{ title: string | React.ReactNode, timer: string, top: string, showContinue: boolean }>({ title: '', timer: '', top: '70%', showContinue: false });
+  const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: string, top: string, showContinue: boolean }>({ title: '', timer: '', top: '70%', showContinue: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
 
   // ==========================================
@@ -49,7 +52,7 @@ export default function EyeComfortApp() {
   const canvasRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<any>(null); 
   const audioRef = useRef<any>({ ctx: null, bgm: null, fadeInt: null, dipTimeout: null });
-  const noSleepRef = useRef<any>(null); // 使用 NoSleep.js
+  const noSleepRef = useRef<any>(null);
   
   const gameState = useRef({
     module: 'DASHBOARD',
@@ -63,11 +66,15 @@ export default function EyeComfortApp() {
   });
 
   // ==========================================
-  // 4. 螢幕常亮控制 (NoSleep.js)
+  // 4. 安全動態載入螢幕常亮控制
   // ==========================================
   useEffect(() => {
-    // 只有在客戶端才實例化 NoSleep
-    noSleepRef.current = new NoSleep();
+    let NoSleepModule: any;
+    import('nosleep.js').then((module) => {
+      NoSleepModule = module.default;
+      noSleepRef.current = new NoSleepModule();
+    }).catch(err => console.error("NoSleep load error:", err));
+
     return () => {
       if (noSleepRef.current) noSleepRef.current.disable();
     };
@@ -161,8 +168,8 @@ export default function EyeComfortApp() {
     if (!lineProfile.uid || lineProfile.uid === '未登入') return;
     try {
       const { error } = await supabase.from('training_logs').insert([{ line_uid: lineProfile.uid, module_name: moduleName, duration: durationSec }]);
-      if (error) console.error('❌ Supabase 寫入錯誤:', error);
-    } catch (err) { console.error('❌ 寫入發生錯誤:', err); }
+      if (error) console.error('寫入錯誤:', error);
+    } catch (err) {}
   };
 
   const getTodayString = () => {
@@ -217,8 +224,8 @@ export default function EyeComfortApp() {
     if (liff.isApiAvailable('shareTargetPicker')) {
       liff.shareTargetPicker([{
         type: "text",
-        text: `👁️ 彥臣數位眼科復健中心打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配視祐全、新視祐全，補充眼睛關鍵營養！\n👉 https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID || '2010891900-u4t0FhJ6'}`
-      }]).then((res) => { if (res) console.log("Shared"); }).catch((e) => alert("分享取消或發生錯誤。"));
+        text: `👁️ 彥臣數位眼科復健中心打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配醫師推薦營養配方，補充眼睛關鍵營養！\n👉 https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID || '2010891900-u4t0FhJ6'}`
+      }]).then((res) => { if (res) console.log("Shared"); }).catch((e) => alert("分享發生錯誤。"));
     }
   };
 
@@ -233,7 +240,7 @@ export default function EyeComfortApp() {
           const profile = await liff.getProfile();
           setLineProfile({ uid: profile.userId, name: profile.displayName });
         }
-      } catch (err) { console.error('LIFF 初始化失敗:', err); }
+      } catch (err) {}
     };
     initLiff();
     loadCalendarData();
@@ -384,42 +391,51 @@ export default function EyeComfortApp() {
   }, [playDingSound]);
 
   // ==========================================
-  // 9. 狀態機與強制置中邏輯 
+  // 9. 狀態機與【絕對置中 React Node 排版】
   // ==========================================
   const updateUI = useCallback(() => {
     const state = gameState.current;
     if (state.module === 'sop') {
       if (state.phase === 'COMPLETED') setUiState({ top: '35%', title: "🎉 3 回合深層放鬆完成！", timer: '', showContinue: false });
-      else if (state.phase === 'LOOKING') setUiState({ top: '70%', title: `(第 ${state.cycle}/${maxCycles} 回合)\n請柔和注視中心橘點`, timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false });
+      else if (state.phase === 'LOOKING') setUiState({ top: '70%', title: <div className="text-center w-full">{`(第 ${state.cycle}/${maxCycles} 回合)`}<br/>請柔和注視中心橘點</div>, timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false });
       else if (state.phase === 'CLOSING') setUiState({ top: '70%', title: "請用力閉上雙眼，徹底放鬆", timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false });
     } else if (state.module === 'stretch') {
-      if (state.stretchTimeLeft > 0) setUiState({ top: '80%', title: "保持頭部靜止\n跟隨光球移動伸展眼肌", timer: `剩餘 ${state.stretchTimeLeft} 秒`, showContinue: false });
+      if (state.stretchTimeLeft > 0) setUiState({ top: '80%', title: <div className="text-center w-full">保持頭部靜止<br/>跟隨光球移動伸展眼肌</div>, timer: `剩餘 ${state.stretchTimeLeft} 秒`, showContinue: false });
       else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false });
       else setUiState({ top: '50%', title: "🎉 眼肌與焦距重訓完成！", timer: '', showContinue: false });
     } else if (state.module === 'chaser') {
-      if (state.chaserTimeLeft > 0) setUiState({ top: '80%', title: `【睫狀肌深空追光】\n死盯流星飛向最深處直到消失\n(已追蹤: ${state.chaserScore} 顆)`, timer: `遊戲剩餘：${state.chaserTimeLeft} 秒`, showContinue: false });
+      if (state.chaserTimeLeft > 0) setUiState({ top: '80%', title: <div className="text-center w-full">【睫狀肌深空追光】<br/>死盯流星飛向最深處直到消失<br/>(已追蹤: {state.chaserScore} 顆)</div>, timer: `遊戲剩餘：${state.chaserTimeLeft} 秒`, showContinue: false });
       else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false });
-      else setUiState({ top: '50%', title: `🎮 遊戲結束！\n您成功追蹤了 ${state.chaserScore} 顆深空流星`, timer: "睫狀肌已獲得充分的遠眺放鬆", showContinue: false });
+      else setUiState({ top: '50%', title: <div className="text-center w-full">🎮 遊戲結束！<br/>您成功追蹤了 {state.chaserScore} 顆深空流星</div>, timer: "睫狀肌已獲得充分的遠眺放鬆", showContinue: false });
     } else if (state.module === 'breathe') {
       if (state.breatheTimeLeft > 0) {
         const action = state.breathPhase === 'INHALE' ? "跟隨星雲【緩慢吸氣】" : "跟隨星雲【徹底吐氣】";
-        setUiState({ top: '85%', title: `${action}\n(請不要對焦任何星星，放寬視野)`, timer: `深度放鬆中：${state.breatheTimeLeft} 秒`, showContinue: false });
+        setUiState({ top: '85%', title: <div className="text-center w-full">{action}<br/>(請不要對焦任何星星，放寬視野)</div>, timer: `深度放鬆中：${state.breatheTimeLeft} 秒`, showContinue: false });
       } else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false });
       else setUiState({ top: '50%', title: "🌌 視覺神經與自律神經已深度重置", timer: "現在您的眼睛處於最佳狀態", showContinue: false });
     } else if (state.module === 'focus') {
-      if (state.isWaitingForRightEye) setUiState({ top: '70%', title: "👁️ 左眼訓練完成！\n請換遮左眼，準備進行【右眼】重訓", timer: '', showContinue: true });
+      if (state.isWaitingForRightEye) setUiState({ top: '70%', title: <div className="text-center w-full text-[#00ffcc] mb-2">👁️ 左眼訓練完成！<br/>請換遮左眼，準備進行【右眼】重訓</div>, timer: '', showContinue: true });
       else if (state.focusTimeLeft > 0) {
-        // 使用 <div> 搭配 w-full 與 text-center 強制置中，並使用 <br/> 取代 \n
-        const eye = state.focusTimeLeft > 60 ? "👁️ 請遮住右眼，訓練【左眼】<br/><br/>" : "👁️ 換遮左眼，訓練【右眼】<br/><br/>";
-        setUiState({ top: '85%', title: <div dangerouslySetInnerHTML={{ __html: eye + focusTexts[state.focusStep] }} className="w-full text-center flex flex-col items-center justify-center" />, timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false });
+        const eye = state.focusTimeLeft > 60 ? "👁️ 請遮住右眼，訓練【左眼】" : "👁️ 換遮左眼，訓練【右眼】";
+        setUiState({ 
+          top: '85%', 
+          title: (
+            <div className="w-full flex flex-col items-center justify-center text-center">
+              <div className="text-[#00ffcc] mb-3">{eye}</div>
+              {focusTexts[state.focusStep]}
+            </div>
+          ), 
+          timer: `重訓剩餘：${state.focusTimeLeft} 秒`, 
+          showContinue: false 
+        });
       } else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false });
-      else setUiState({ top: '50%', title: <div dangerouslySetInnerHTML={{ __html: "🎯 睫狀肌幫浦重訓完成！<br/><br/><span style='font-size:18px; color:#FFD93D;'>⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br/>建議接著進行前四個眼睛放鬆模組。</span>" }} className="w-full text-center flex flex-col items-center" />, timer: '', showContinue: false });
+      else setUiState({ top: '50%', title: <div className="w-full text-center flex flex-col items-center">🎯 睫狀肌幫浦重訓完成！<br/><br/><span className="text-[18px] text-[#FFD93D]">⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br/>建議接著進行前四個眼睛放鬆模組。</span></div>, timer: '', showContinue: false });
     } else if (state.module === 'amsler' || state.module === 'astigmatism') {
       if (state.testPhase === 'COMPLETED') setUiState({ top: '50%', title: "檢測完成！若有異常請檢查視力與散光度數", timer: "點擊左上角返回大廳", showContinue: false });
       else {
         const eye = state.testPhase === 'LEFT_EYE' ? "左眼" : "右眼"; const cover = state.testPhase === 'LEFT_EYE' ? "右眼" : "左眼";
         const desc = state.module === 'amsler' ? "(觀察周圍網格是否扭曲或有黑影)" : "(觀察線條是否有些特別黑粗、或模糊發淡？)";
-        setUiState({ top: '80%', title: `【檢測${eye}】請遮住${cover}，注視中心\n${desc}`, timer: `檢測中：${state.testTimeLeft} 秒`, showContinue: false });
+        setUiState({ top: '80%', title: <div className="text-center w-full">【檢測{eye}】請遮住{cover}，注視中心<br/>{desc}</div>, timer: `檢測中：${state.testTimeLeft} 秒`, showContinue: false });
       }
     }
   }, []);
@@ -495,14 +511,14 @@ export default function EyeComfortApp() {
   }, [playDingSound, dipBGM, updateUI, logTraining]);
 
   // ==========================================
-  // 10. 視圖切換與按鈕處理 (綁定 NoSleep)
+  // 10. 視圖切換與按鈕處理 (啟動 NoSleep)
   // ==========================================
   const startTraining = (type: string) => {
     setActiveModule(type); setCurrentView('TRAINING');
     const state = gameState.current;
     state.module = type; state.isResting = false; state.restTimeLeft = 0;
     
-    // 啟動防休眠機制
+    // 使用者點擊時啟用防休眠
     if (noSleepRef.current) {
       noSleepRef.current.enable();
     }
@@ -523,7 +539,7 @@ export default function EyeComfortApp() {
     gameState.current.module = 'DASHBOARD';
     engineRef.current?.clearBalls();
     
-    // 關閉防休眠機制
+    // 關閉防休眠，讓手機正常休息
     if (noSleepRef.current) {
       noSleepRef.current.disable();
     }
@@ -554,12 +570,15 @@ export default function EyeComfortApp() {
           </p>
           
           <div className="w-full max-w-[800px] flex flex-col gap-5 mb-[40px]">
-            <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
-              <h3 className="text-[#00ffcc] text-[22px] mb-2 font-bold">📖 護眼常見營養素與 RPE 百科</h3>
-              <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解護眼成分作用部位，以及視網膜垃圾處理廠 (RPE) 的重要性</p>
+            {/* 數位復健模組與醫學學理說明入口 */}
+            <div onClick={() => setCurrentView('INFO_MODULES')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
+              <h3 className="text-[#00ffcc] text-[22px] mb-2 font-bold">📖 數位復健模組與醫學學理說明</h3>
+              <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解本中心五大訓練模組之設計原理與學術文獻探討</p>
             </div>
+            
+            {/* 每月復健進度入口 */}
             <div onClick={() => setCurrentView('CALENDAR')} className="w-full bg-[#161b22] border-2 border-[#4D96FF] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(77,150,255,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
-              <h3 className="text-[#4D96FF] text-[22px] mb-2 font-bold">📅 每月復健進度</h3>
+              <h3 className="text-[#4D96FF] text-[22px] mb-2 font-bold">📅 每日/每月復健進度</h3>
               <p className="text-[#8b9bb4] text-[16px] m-0">點擊查看您的打卡紀錄，分享給家人與醫師</p>
             </div>
             
@@ -587,7 +606,10 @@ export default function EyeComfortApp() {
             <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
             <div className="w-full bg-[#161b22] rounded-2xl p-6 box-border shadow-[0_10px_25px_rgba(0,0,0,0.5)]">
               <h2 className="text-[#E5B55E] text-center text-[32px] m-0 mb-[15px] font-bold">{calendarData.year} 年 {calendarData.month + 1} 月</h2>
-              <p className="text-[#8b9bb4] text-center text-[18px] m-0 mb-[5px]">建議搭配PPLs®晶亮配方，每天復健三次</p>
+              
+              {/* 更新為醫師推薦營養配方 */}
+              <p className="text-[#8b9bb4] text-center text-[18px] m-0 mb-[5px]">建議搭配醫師推薦營養配方，每天復健三次</p>
+              
               <p className="text-[#8b9bb4] text-center text-[18px] m-0 mb-[25px]">還有最重要的眼睛要適度的休息</p>
               <div className="grid grid-cols-7 gap-[5px] mb-[15px]">
                 {['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="text-[#888] text-center text-[18px]">{d}</div>)}
@@ -599,86 +621,104 @@ export default function EyeComfortApp() {
                   </div>
                 ))}
               </div>
-              <button onClick={handleShareCalendar} className="w-full p-[18px] mt-[25px] bg-[#2B579A] text-white border-none rounded-xl text-[20px] font-bold cursor-pointer">▷ 傳送每月復健次數</button>
+              
+              {/* 更新按鈕名稱 */}
+              <button onClick={handleShareCalendar} className="w-full p-[18px] mt-[25px] bg-[#2B579A] text-white border-none rounded-xl text-[20px] font-bold cursor-pointer">▷ 傳送每日/每月復健次數</button>
             </div>
           </div>
         </div>
       )}
 
-      {currentView === 'INFO_NUTRIENT' && (
+      {/* ========================================== */}
+      {/* 數位復健模組學理與文獻探討頁面 */}
+      {/* ========================================== */}
+      {currentView === 'INFO_MODULES' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
-            <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">返回大廳</button>
-            <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#00ffcc] pb-2.5 mb-[15px] font-bold">護眼營養素與眼睛構造對照表</h2>
-            <p className="text-[#8b9bb4] text-[18px] leading-[1.6] mb-5 bg-[#162b2b] p-4 rounded-lg">
-              <strong className="text-[#00ffcc]">閱讀重點｜</strong>營養素通常是維持組織正常功能或降低缺乏風險，不能取代眼科檢查與治療。Propolins 最適合定位在視網膜色素上皮（RPE），目前證據為人類細胞與動物模型，尚非人體臨床療效。
-            </p>
-            <div className="overflow-x-auto mb-[30px]">
-              <table className="w-full border-collapse text-[#fffdd0] text-[17px] leading-[1.6]">
-                <thead>
-                  <tr className="bg-[#1a2233] text-left">
-                    <th className="p-3.5 border border-[#2a3a5a]">營養素／成分</th><th className="p-3.5 border border-[#2a3a5a]">主要相關部位</th><th className="p-3.5 border border-[#2a3a5a]">作用與目前證據</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">葉黃素、玉米黃素</td><td className="p-3.5 border border-[#2a3a5a]">黃斑部、中央凹</td><td className="p-3.5 border border-[#2a3a5a]">構成黃斑色素，與中央視力、辨色有關；最直接對應黃斑部的營養素。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">Propolins (尤其G)</td><td className="p-3.5 border border-[#2a3a5a]">視網膜色素上皮RPE；外層視網膜界面</td><td className="p-3.5 border border-[#2a3a5a]">細胞實驗顯示可提高損傷下存活；乾性AMD大鼠模型中，ERG c-wave部分恢復表示RPE功能改善。</td></tr>
-                  <tr><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素A／β-胡蘿蔔素</td><td className="p-3.5 border border-[#2a3a5a]">視網膜桿狀細胞；角結膜</td><td className="p-3.5 border border-[#2a3a5a]">維持眼表上皮；缺乏可能夜盲或乾眼。</td></tr>
-                  <tr><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">DHA & Omega-3</td><td className="p-3.5 border border-[#2a3a5a]">感光細胞膜 / 淚膜、眼表</td><td className="p-3.5 border border-[#2a3a5a]">具生理結構角色；可能影響發炎與淚膜油脂層。</td></tr>
-                  <tr><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素C、E、鋅、銅</td><td className="p-3.5 border border-[#2a3a5a]">水晶體、黃斑部</td><td className="p-3.5 border border-[#2a3a5a]">抗氧化營養素，組成AREDS2可延緩特定AMD惡化。不適合未經診斷自行長期高劑量服用。</td></tr>
-                  <tr><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素B1、B12、葉酸</td><td className="p-3.5 border border-[#2a3a5a]">視神經</td><td className="p-3.5 border border-[#2a3a5a]">嚴重缺乏可能造成營養性視神經病變；主要為避免缺乏。</td></tr>
-                </tbody>
-              </table>
+            <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
+            
+            <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#00ffcc] pb-2.5 mb-[15px] font-bold">🩺 數位復健模組學理與文獻探討</h2>
+            
+            {/* 法規免責聲明區塊 */}
+            <div className="mb-8 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d] shadow-[0_0_10px_rgba(255,77,77,0.2)]">
+              <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-3 flex items-center gap-2">
+                <span>⚠️</span> 醫療法規與免責聲明
+              </h3>
+              <p className="text-[#d1b0b0] text-[16px] leading-[1.8] m-0">
+                本應用程式定位為日常視覺疲勞之放鬆與保健輔助工具，<strong>非屬醫療器材</strong>。下方所引述之醫學期刊與文獻，僅作為視覺生理學及模組設計之學理背景參考，<strong>並不代表本系統具有診斷、治療、矯正或預防任何眼科疾病（如近視、老花、青光眼等）之療效</strong>。若您有任何眼部不適或視力模糊，請務必尋求專業眼科醫師之檢查與治療。
+              </p>
             </div>
-            <h3 className="text-[#fffdd0] mb-3 text-[20px] font-bold">⚠️ 補充品使用注意</h3>
-            <ul className="text-[#8b9bb4] text-[17px] leading-[1.8] mb-[30px] pl-5 list-disc">
-              <li><strong className="text-[#fffdd0]">不可自行點眼：</strong>專利式(II)是研究用眼科製劑，市售口服蜂膠絕不可自行滴入眼睛。</li>
-              <li><strong className="text-[#fffdd0]">證據界線：</strong>Propolins 支持的是「受損RPE的細胞保護」，目前為細胞與動物前臨床證據，不能據此宣稱預防或治療人體AMD。</li>
-              <li><strong className="text-[#fffdd0]">AREDS2：</strong>只適用眼科醫師判定的特定AMD；健康人或單純疲勞者不應自行套用高劑量配方。</li>
-              <li><strong className="text-[#fffdd0]">就醫警訊：</strong>出現視野扭曲、單眼黑影/閃光、視力下降等，應盡快就醫，不應只靠補充品觀察。</li>
-            </ul>
-            <div className="text-center mt-10">
-              <button onClick={() => setCurrentView('INFO_RPE')} className="px-[30px] py-[15px] bg-[#00ffcc] text-[#0f141e] border-none rounded-full text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(0,255,204,0.4)]">👉 RPE 為什麼重要？</button>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {currentView === 'INFO_RPE' && (
-        <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
-          <div className="max-w-[800px] mx-auto pb-[50px]">
-            <button onClick={() => setCurrentView('INFO_NUTRIENT')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回護眼營養素</button>
-            <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#00ffcc] pb-2.5 mb-5 font-bold">🏭 垃圾處理廠與清潔工：認識 RPE</h2>
-            <div className="text-[#8b9bb4] text-[17px] leading-[1.8]">
-              <p className="mb-[15px]">我們可以把眼底的「視網膜色素上皮細胞 (RPE)」想像成眼底的<strong className="text-[#fffdd0]">垃圾處理廠</strong>，而上方的感光細胞則是負責看東西的員工。</p>
-              
-              <h3 className="text-[#00ffcc] mt-[25px] mb-2.5 text-[20px] font-bold">一、什麼是脂褐質？它是怎麼形成的？</h3>
-              <ul className="pl-5 mb-5 list-disc">
-                <li><strong>員工天天產生垃圾：</strong>感光細胞每天工作會消耗能量，並脫落大量老舊廢棄物。</li>
-                <li><strong>清潔工天天回收：</strong>健康的 RPE 每天會把垃圾吞進去，用溶小體酵素徹底分解化為養分。</li>
-                <li><strong>變成陳年鐵鏽：</strong>若受藍光傷害或老化，處理廠酵素變弱。卡在肚子裡的油垢經光線照射後生鏽變質，形成了永遠無法清除的<strong className="text-[#ff6b6b]">「脂褐質」</strong>。</li>
-              </ul>
-
-              <h3 className="text-[#00ffcc] mt-[25px] mb-2.5 text-[20px] font-bold">二、 健康的 RPE（好工廠）：如何阻擋傷害？</h3>
-              <p className="mb-[15px]">當你的垃圾處理廠（RPE 細胞）還很健康、體力很好時，它可以這樣保護眼睛：</p>
-              <ul className="pl-5 mb-5 list-disc">
-                <li><strong className="text-[#fffdd0]">天天清空垃圾：</strong>來多少廢棄物就吃多少、消化多少，不讓垃圾有機會在眼底生鏽變成脂褐質。</li>
-                <li><strong className="text-[#fffdd0]">自帶超強防護罩：</strong>健康細胞體內有很多天然的防曬劑（黑色素與抗氧化酶），能把照進眼睛的有害光線擋掉，保護工廠機器不被曬壞。</li>
-                <li><strong className="text-[#fffdd0]">精準控管原料：</strong>能把看東西需要的維生素 A 處理得很順暢，不會讓它們在眼底下亂套、亂結塊。</li>
-              </ul>
-
-              <h3 className="text-[#ff6b6b] mt-[25px] mb-2.5 text-[20px] font-bold">三、不健康的 RPE（爛工廠）帶來的災難</h3>
-              <ul className="pl-5 mb-[25px] list-disc">
-                <li><strong className="text-[#fffdd0]">1. 吃再多營養也吸收不了：</strong>就算吃再多高檔葉黃素，不健康的工廠也無法吸收利用。</li>
-                <li><strong className="text-[#fffdd0]">2. 眼底長斑堆垃圾：</strong>肚子被脂褐質塞爆後，把垃圾往地基亂倒，形成「隱形斑(Drusen)」。</li>
-                <li><strong className="text-[#fffdd0]">3. 眼睛結構大毀滅：</strong>防護牆破裂，引發濕性病變；最終員工集體餓死，導致視野中央出現黑洞失明。</li>
-              </ul>
-              
-              <div className="bg-[#162b2b] p-5 rounded-lg text-center border border-[#00ffcc]">
-                <p className="text-[#fffdd0] text-[19px] font-bold m-0">💡 總結</p>
-                <p className="text-[#00ffcc] text-[18px] mt-2.5 mb-0">「健康的 RPE 能幫解消滅垃圾；<br />不健康的 RPE 會讓垃圾（脂褐質）堆成高山，最後把你的視力連根拔起。」</p>
+            {/* 模組 1: SOP */}
+            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FF6B6B]">
+              <h3 className="text-[#FF6B6B] text-[22px] font-bold mb-3">🚀 45秒快速舒緩</h3>
+              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4">
+                <strong>設計原理：</strong>結合動態視覺刺激與淚膜穩定概念。短時間的視網膜注視與強制閉眼，能輔助舒緩初期水晶體對焦壓力，並藉由閉眼動作輔助眼瞼板腺分泌油脂，幫助維持眼表淚膜穩定。
+              </p>
+              <div className="bg-[#0f141e] p-4 rounded-lg">
+                <span className="text-[#8b9bb4] text-[14px] block mb-1">參考文獻：</span>
+                <p className="text-[#a5b6cf] text-[15px] italic m-0">
+                  Rosenfield, M. (2011). Computer vision syndrome: a review of ocular causes and potential treatments. Ophthalmic and Physiological Optics, 31(5), 502-515.
+                </p>
               </div>
             </div>
+
+            {/* 模組 2: Stretch */}
+            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#4D96FF]">
+              <h3 className="text-[#4D96FF] text-[22px] font-bold mb-3">🔄 動態 3D 眼肌伸展</h3>
+              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4">
+                <strong>設計原理：</strong>現代人長時間凝視螢幕，容易導致控制眼球的「眼外肌」緊繃。透過眼球的極限軌跡追蹤（平滑追隨運動），引導六條眼外肌進行大範圍伸展活動，幫助眼周肌肉放鬆。
+              </p>
+              <div className="bg-[#0f141e] p-4 rounded-lg">
+                <span className="text-[#8b9bb4] text-[14px] block mb-1">參考文獻：</span>
+                <p className="text-[#a5b6cf] text-[15px] italic m-0">
+                  Kim, S. D., et al. (2016). Effects of eye exercises on eye fatigue and visual function. Journal of Physical Therapy Science, 28(2), 544-547.
+                </p>
+              </div>
+            </div>
+
+            {/* 模組 3: Chaser */}
+            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#6BCB77]">
+              <h3 className="text-[#6BCB77] text-[22px] font-bold mb-3">🎮 睫狀肌深空追光</h3>
+              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4">
+                <strong>設計原理：</strong>利用 3D 空間營造「光學無限遠（Optical Infinity）」的錯覺。引導視線向深空遠眺，協助控制水晶體的睫狀肌放鬆，作為輔助對抗因長時間近距離工作所引起的調節性疲勞之日常運動。
+              </p>
+              <div className="bg-[#0f141e] p-4 rounded-lg">
+                <span className="text-[#8b9bb4] text-[14px] block mb-1">參考文獻：</span>
+                <p className="text-[#a5b6cf] text-[15px] italic m-0">
+                  Tosha, C., et al. (2009). Accommodation response and visual discomfort. Ophthalmic and Physiological Optics, 29(6), 625-633.
+                </p>
+              </div>
+            </div>
+
+            {/* 模組 4: Breathe */}
+            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FFD93D]">
+              <h3 className="text-[#FFD93D] text-[22px] font-bold mb-3">🌌 星雲散焦與神經放鬆</h3>
+              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4">
+                <strong>設計原理：</strong>透過解除中央凹對焦並刻意體驗「周邊視覺」，配合固定頻率的深度共振呼吸，能夠輔助調節自律神經張力，幫助放鬆身心與日常視覺壓力。
+              </p>
+              <div className="bg-[#0f141e] p-4 rounded-lg">
+                <span className="text-[#8b9bb4] text-[14px] block mb-1">參考文獻：</span>
+                <p className="text-[#a5b6cf] text-[15px] italic m-0">
+                  Zaccaro, A., et al. (2018). How breath-control can change your life: A systematic review on psycho-physiological correlates of slow breathing. Frontiers in Human Neuroscience, 12, 353.
+                </p>
+              </div>
+            </div>
+
+            {/* 模組 5: Focus */}
+            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FF3366]">
+              <h3 className="text-[#FF3366] text-[22px] font-bold mb-3">🎯 Z 軸遠近對焦飛梭</h3>
+              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4">
+                <strong>設計原理：</strong>參考視覺活動中的「調節靈敏度（Accommodative Facility）」概念。藉由引導睫狀肌在看近與看遠之間進行快速切換活動，作為維持水晶體調節靈活度與反應速度的日常輔助練習。
+              </p>
+              <div className="bg-[#0f141e] p-4 rounded-lg">
+                <span className="text-[#8b9bb4] text-[14px] block mb-1">參考文獻：</span>
+                <p className="text-[#a5b6cf] text-[15px] italic m-0">
+                  Sterner, B., et al. (2001). Accommodation facility training with a long term follow up in a sample of school aged children showing accommodative dysfunction. Documenta Ophthalmologica, 103(2), 117-129.
+                </p>
+              </div>
+            </div>
+
           </div>
         </div>
       )}
@@ -703,46 +743,6 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {currentView === 'AD' && (
-        <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
-          <div className="max-w-[800px] mx-auto pb-[50px]">
-            <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
-            <div className="bg-white rounded-[20px] p-[30px_20px] shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
-              <div className="flex justify-between items-center mb-[30px]">
-                <div className="font-[900] text-[18px] text-[#b8982a]">PP<span className="text-[#333]">LS</span> <span className="text-[12px] text-[#999] font-normal tracking-[1px]">INSIDE</span></div>
-              </div>
-              <h2 className="text-center text-[#1A4B82] text-[28px] font-bold mb-[40px]">補充眼睛完整營養</h2>
-              <div className="flex justify-center mb-[45px]">
-                <div className="w-[260px] h-[380px] relative bg-white rounded-lg shadow-[0_15px_35px_rgba(0,0,0,0.15)] overflow-hidden border border-[#eaeaea]">
-                  <div className="absolute right-0 top-0 w-[45%] h-full bg-[#1A4B82]" style={{ clipPath: 'polygon(25% 0, 100% 0, 100% 100%, 0 100%)' }}></div>
-                  <div className="absolute left-0 top-0 w-full h-full p-[30px_20px] box-border flex flex-col text-left z-[2]">
-                    <div className="text-[13px] text-[#666] font-bold mb-[25px]">PPLs® VisionCare</div>
-                    <div className="mb-[35px]">
-                      <div className="text-[14px] font-bold text-[#666] mb-0.5">第二代</div>
-                      <div className="text-[28px] font-[900] text-[#1A4B82] border-b-[3px] border-[#1A4B82] inline-block pb-1">視祐全</div>
-                      <div className="text-[13px] font-bold text-[#333] mt-2">專利配方效果好</div>
-                    </div>
-                    <div>
-                      <div className="text-[28px] font-[900] text-[#1A4B82] border-b-[3px] border-[#1A4B82] inline-block pb-1">新視祐全</div>
-                      <div className="text-[13px] font-bold text-[#333] mt-2">加了魚油更滋潤</div>
-                    </div>
-                    <div className="mt-auto text-[11px] text-[#666] font-bold">◼ 連續榮獲多項專利肯定</div>
-                  </div>
-                </div>
-              </div>
-              <div className="text-center mb-[35px] text-[20px] font-bold text-[#444] leading-[2]">
-                <div>維持補充 每日 <span className="text-[#d9534f] text-[28px] mx-1">2</span> 粒</div>
-                <div>加強提升 請洽專業藥師</div>
-              </div>
-              <div className="bg-[#f4f9ff] border-2 border-[#b3d4f0] rounded-[15px] p-[20px_15px] text-center mb-[25px]">
-                <div className="text-[#1A4B82] text-[22px] font-bold mb-2">補充專利PPLs®配方</div>
-                <div className="text-[#555] text-[15px] font-bold">營養進得去，廢物出得來</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* 視圖 7: 訓練進行中 (TRAINING) */}
       {currentView === 'TRAINING' && (
         <>
@@ -750,13 +750,8 @@ export default function EyeComfortApp() {
           
           <div className="absolute inset-x-0 w-full px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10 transition-all duration-[1.2s] ease-[cubic-bezier(0.25,1,0.5,1)]" style={{ top: uiState.top, transform: 'translateY(-50%)' }}>
             
-            {/* 強制置中容器 */}
             <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] flex flex-col items-center justify-center">
-              {typeof uiState.title === 'string' ? (
-                <span className="whitespace-pre-wrap">{uiState.title}</span>
-              ) : (
-                uiState.title
-              )}
+              {uiState.title}
             </div>
             
             <div className="w-full text-center text-[#00ffcc] font-mono text-[24px]">

@@ -49,8 +49,9 @@ export default function EyeComfortApp() {
   // 3. 遊戲核心狀態 (使用 useRef 避免 setInterval 造成重新渲染)
   // ==========================================
   const canvasRef = useRef<HTMLDivElement>(null);
-  const engineRef = useRef<any>(null); // 綁定 Three.js 控制方法
+  const engineRef = useRef<any>(null); 
   const audioRef = useRef<any>({ ctx: null, bgm: null, fadeInt: null, dipTimeout: null });
+  const wakeLockRef = useRef<any>(null); // 螢幕喚醒鎖定
   
   const gameState = useRef({
     module: 'DASHBOARD',
@@ -64,7 +65,42 @@ export default function EyeComfortApp() {
   });
 
   // ==========================================
-  // 4. 音效與 BGM 系統
+  // 4. 螢幕常亮控制 (Wake Lock API)
+  // ==========================================
+  useEffect(() => {
+    const requestWakeLock = async () => {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+        }
+      } catch (err) {
+        console.log('Wake Lock Error:', err);
+      }
+    };
+
+    if (currentView === 'TRAINING') {
+      requestWakeLock();
+    } else {
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().then(() => { wakeLockRef.current = null; });
+      }
+    }
+
+    const handleVisChange = () => {
+      if (document.visibilityState === 'visible' && currentView === 'TRAINING') requestWakeLock();
+    };
+    
+    document.addEventListener('visibilitychange', handleVisChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisChange);
+      if (wakeLockRef.current) {
+        wakeLockRef.current.release().then(() => { wakeLockRef.current = null; }).catch(()=>{});
+      }
+    };
+  }, [currentView]);
+
+  // ==========================================
+  // 5. 音效與 BGM 系統
   // ==========================================
   useEffect(() => {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
@@ -145,7 +181,7 @@ export default function EyeComfortApp() {
   }, []);
 
   // ==========================================
-  // 5. 雲端與打卡紀錄系統
+  // 6. 雲端與打卡紀錄系統
   // ==========================================
   const logTraining = async (moduleName: string, durationSec: number) => {
     if (!lineProfile.uid || lineProfile.uid === '未登入') return;
@@ -213,7 +249,7 @@ export default function EyeComfortApp() {
   };
 
   // ==========================================
-  // 6. LIFF 初始化
+  // 7. LIFF 初始化
   // ==========================================
   useEffect(() => {
     const initLiff = async () => {
@@ -230,7 +266,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // 7. Three.js 引擎初始化
+  // 8. Three.js 引擎初始化
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -243,7 +279,6 @@ export default function EyeComfortApp() {
     canvasRef.current.appendChild(renderer.domElement);
     scene.add(new THREE.AmbientLight(0xfffdd0, 0.6));
 
-    // Groups
     const sopGroup = new THREE.Group(); sopGroup.position.y = 12;
     const sopMat = new THREE.MeshStandardMaterial({ color: 0x6b8e23, emissive: 0x2e4b1c, wireframe: true, transparent: true });
     const focusTarget = new THREE.Mesh(new THREE.SphereGeometry(8, 32, 32), sopMat);
@@ -290,7 +325,6 @@ export default function EyeComfortApp() {
     allModules.forEach(m => m.visible = false);
     const stimulusBalls: any[] = [];
 
-    // 引擎方法暴露
     engineRef.current = {
       start: (mod: string) => {
         allModules.forEach(m => m.visible = false);
@@ -376,7 +410,7 @@ export default function EyeComfortApp() {
   }, [playDingSound]);
 
   // ==========================================
-  // 8. 狀態機與倒數邏輯 (取代 setInterval)
+  // 9. 狀態機與倒數邏輯 
   // ==========================================
   const updateUI = useCallback(() => {
     const state = gameState.current;
@@ -486,7 +520,7 @@ export default function EyeComfortApp() {
   }, [playDingSound, dipBGM, updateUI, logTraining]);
 
   // ==========================================
-  // 9. 視圖切換與按鈕處理
+  // 10. 視圖切換與按鈕處理
   // ==========================================
   const startTraining = (type: string) => {
     setActiveModule(type); setCurrentView('TRAINING');
@@ -514,14 +548,12 @@ export default function EyeComfortApp() {
   const showModuleIntro = (type: string) => { setActiveModule(type); setCurrentView('INFO_INTRO'); };
 
   // ==========================================
-  // 10. React JSX 渲染樹 (Tailwind 排版對應)
+  // 11. React JSX 渲染樹
   // ==========================================
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#0f141e] font-sans">
-      {/* 3D 畫布底層 */}
       <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
 
-      {/* 視圖 1: 大廳 (DASHBOARD) */}
       {currentView === 'DASHBOARD' && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-start py-10 px-5 overflow-y-auto box-border">
           <h1 className="text-[#fffdd0] text-[32px] text-center mb-[15px] tracking-[1px]">
@@ -536,18 +568,15 @@ export default function EyeComfortApp() {
           </p>
           
           <div className="w-full max-w-[800px] flex flex-col gap-5 mb-[40px]">
-            {/* 衛教百科入口 */}
             <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
               <h3 className="text-[#00ffcc] text-[22px] mb-2 font-bold">📖 護眼常見營養素與 RPE 百科</h3>
               <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解護眼成分作用部位，以及視網膜垃圾處理廠 (RPE) 的重要性</p>
             </div>
-            {/* 復健進度入口 */}
             <div onClick={() => setCurrentView('CALENDAR')} className="w-full bg-[#161b22] border-2 border-[#4D96FF] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(77,150,255,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
               <h3 className="text-[#4D96FF] text-[22px] mb-2 font-bold">📅 每月復健進度</h3>
               <p className="text-[#8b9bb4] text-[16px] m-0">點擊查看您的打卡紀錄，分享給家人與醫師</p>
             </div>
             
-            {/* 復健與檢測模組 */}
             <div className="flex flex-col gap-5 w-full">
               <ModuleCard title="🚀 45秒快速舒緩" desc="結合遠眺聚焦、隨機白球衝擊與深層閉眼潤滑。" color="#FF6B6B" onClick={() => showModuleIntro('sop')} />
               <ModuleCard title="🔄 動態 3D 眼肌伸展" desc="引導眼球進行 ∞ 字型極限軌跡，強迫拉伸控制眼球的六條眼外肌。" color="#4D96FF" onClick={() => showModuleIntro('stretch')} />
@@ -558,7 +587,6 @@ export default function EyeComfortApp() {
               <ModuleCard title="👁️ 散光軸向自我檢測" desc="放射鐘測試。檢測是否因散光未矯正而導致嚴重疲勞。" color="#FF9F1C" onClick={() => startTraining('astigmatism')} />
             </div>
 
-            {/* 底部廣告 */}
             <div onClick={() => setCurrentView('AD')} className="w-full border-2 border-dashed border-[#ffff00] rounded-xl p-5 cursor-pointer flex justify-between items-center box-border mt-4">
               <div className="text-[#fffdd0] text-[18px] font-bold flex items-center gap-2.5"><span className="text-[#ffff00] text-[22px]">💡</span> 補充眼睛完整營養</div>
               <div className="text-[#666] text-[20px] font-bold">&gt;</div>
@@ -567,7 +595,6 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 2: 日曆打卡 (CALENDAR) */}
       {currentView === 'CALENDAR' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -592,7 +619,6 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 3: 衛教與營養素頁面 (INFO_NUTRIENT) */}
       {currentView === 'INFO_NUTRIENT' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -632,7 +658,6 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 4: RPE 說明頁面 (INFO_RPE) */}
       {currentView === 'INFO_RPE' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -672,7 +697,6 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 5: 模組原理說明 (INFO_INTRO) */}
       {currentView === 'INFO_INTRO' && activeModule && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -693,7 +717,6 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 6: 底部廣告頁面 (AD) */}
       {currentView === 'AD' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -737,10 +760,10 @@ export default function EyeComfortApp() {
       {/* 視圖 7: 訓練進行中 (TRAINING) */}
       {currentView === 'TRAINING' && (
         <>
-          <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto">🔙 返回大廳</button>
+          <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
           
-          <div className="absolute left-1/2 -translate-x-1/2 w-[90%] text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10 transition-all duration-[1.2s] ease-[cubic-bezier(0.25,1,0.5,1)]" style={{ top: uiState.top, transform: 'translate(-50%, -50%)' }}>
-            <div className="text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.4] whitespace-pre-wrap">{uiState.title}</div>
+          <div className="absolute left-0 w-full px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10 transition-all duration-[1.2s] ease-[cubic-bezier(0.25,1,0.5,1)]" style={{ top: uiState.top, transform: 'translateY(-50%)' }}>
+            <div className="text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.4] whitespace-pre-wrap flex flex-col items-center">{uiState.title}</div>
             <div className="text-[#00ffcc] font-mono text-[24px]">{uiState.timer}</div>
             {uiState.showContinue && (
               <button onClick={() => { gameState.current.isWaitingForRightEye = false; playDingSound(); setUiState(prev => ({...prev, showContinue: false})); }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
@@ -753,7 +776,6 @@ export default function EyeComfortApp() {
   );
 }
 
-// 模組按鈕卡片共用元件
 function ModuleCard({ title, desc, color, onClick }: { title: string, desc: string, color: string, onClick: () => void }) {
   return (
     <div onClick={onClick} className="bg-[#1a2233] rounded-xl p-[24px_20px] cursor-pointer w-full box-border transition-transform hover:scale-[1.01]" style={{ border: `2px solid ${color}` }}>

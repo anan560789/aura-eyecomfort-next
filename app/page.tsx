@@ -42,7 +42,7 @@ export default function EyeComfortApp() {
   const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
   
   // 訓練介面狀態
-  const [uiState, setUiState] = useState({ title: '', timer: '', top: '70%', showContinue: false });
+  const [uiState, setUiState] = useState<{ title: string | React.ReactNode, timer: string, top: string, showContinue: boolean }>({ title: '', timer: '', top: '70%', showContinue: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
 
   // ==========================================

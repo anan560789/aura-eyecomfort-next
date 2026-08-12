@@ -438,7 +438,16 @@ export default function EyeComfortApp() {
     vrButton.style.transform = 'translateX(-50%)';
     vrButton.style.zIndex = '9999';
     canvasRef.current.appendChild(renderer.domElement); 
-    canvasRef.current.appendChild(vrButton); // 掛載 VR 啟動按鈕
+
+    // 【新增】檢查當下設備是否支援 WebXR VR 模式
+    if ('xr' in navigator) {
+      (navigator as any).xr.isSessionSupported('immersive-vr').then((supported: boolean) => {
+        // 如果支援（例如用 Vision Pro 或 Quest 開啟），才把按鈕加進畫面
+        if (supported && canvasRef.current) {
+          canvasRef.current.appendChild(vrButton);
+        }
+      });
+    }
 
     scene.add(new THREE.AmbientLight(0xfffdd0, 0.6));
 

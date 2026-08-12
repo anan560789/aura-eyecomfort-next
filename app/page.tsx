@@ -45,9 +45,9 @@ export default function EyeComfortApp() {
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
 
   // ==========================================
-  // 3. AI 視線追蹤狀態與引擎 
+  // 3. AI 視線追蹤狀態與引擎 (強化點一：加入 TOO_CLOSE 距離狀態)
   // ==========================================
-  const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION'>('IDLE');
+  const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION' | 'TOO_CLOSE'>('IDLE');
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
@@ -63,7 +63,7 @@ export default function EyeComfortApp() {
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0,
-    aiStatus: 'IDLE' 
+    aiStatus: 'IDLE' // 包含 'TOO_CLOSE'
   });
 
   const startTrackingLoop = useCallback(() => {
@@ -77,6 +77,7 @@ export default function EyeComfortApp() {
         
         let yawRatio = 1;
         let pitchRatio = 1;
+        let eyeDistance = 0;
 
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
@@ -87,43 +88,60 @@ export default function EyeComfortApp() {
           const eyeNoseY = Math.abs(lm[1].y - lm[168].y); 
           const noseMouthY = Math.abs(lm[13].y - lm[1].y); 
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
+
+          // 專利實作一：計算雙眼在畫面中的佔比，反推實體距離
+          eyeDistance = Math.abs(leftEyeX - rightEyeX);
         }
 
         const currentMod = gameState.current.module;
         const currentPhase = gameState.current.phase;
         
         const isSopClosing = currentMod === 'sop' && currentPhase === 'CLOSING';
-        // 核心修復：為需要遮眼的模組 (5, 6, 7) 提供追蹤豁免權
         const requiresCoveringEye = ['focus', 'amsler', 'astigmatism'].includes(currentMod);
 
         let isLost = false;
+        let isTooClose = false;
 
-        // 如果連臉都完全找不到，那絕對是 Lost
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            // 如果找到了臉，但不是在閉眼或遮眼階段，才去嚴格檢查角度
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > 1.6 || pitchRatio > 1.6) {
                     isLost = true;
                 }
             }
+            // 閉環控制觸發點：雙眼間距大於 0.18，代表臉部已貼近螢幕小於 30 公分
+            if (!isLost && !isSopClosing && eyeDistance > 0.18) {
+                isTooClose = true;
+            }
         }
 
-        // 如果在閉眼或遮眼階段，只要臉還在畫面上（即便被遮住一半），就視為 TRACKING
-        if (isSopClosing) isLost = false;
+        if (isSopClosing) {
+            isLost = false;
+            isTooClose = false;
+        }
 
         if (isLost) {
           lostFrames++;
         } else {
           lostFrames = 0;
-          if (gameState.current.aiStatus !== 'TRACKING') {
-            gameState.current.aiStatus = 'TRACKING';
-            setTrackingState('TRACKING');
+          if (isTooClose) {
+            // 切換至過近防呆狀態
+            if (gameState.current.aiStatus !== 'TOO_CLOSE') {
+              gameState.current.aiStatus = 'TOO_CLOSE';
+              setTrackingState('TOO_CLOSE');
+            }
+          } else {
+            // 恢復正常追蹤
+            if (gameState.current.aiStatus !== 'TRACKING') {
+              gameState.current.aiStatus = 'TRACKING';
+              setTrackingState('TRACKING');
+            }
           }
         }
         
-        if (lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') {
+        // 依然保留失去視線的最高優先級容錯
+        if ((lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') || (lostFrames > 3 && gameState.current.aiStatus === 'TOO_CLOSE')) {
           gameState.current.aiStatus = 'LOST';
           setTrackingState('LOST');
         }
@@ -262,7 +280,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 
+  // Three.js 引擎與動畫
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -338,7 +356,8 @@ export default function EyeComfortApp() {
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(mod) || (mod === 'sop' && gameState.current.phase === 'LOOKING');
       const currentAiStatus = gameState.current.aiStatus;
       
-      if (requiresTracking && (currentAiStatus === 'INIT' || (currentAiStatus === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED'))) { 
+      // 強化點一整合：新增 TOO_CLOSE 狀態的動畫凍結
+      if (requiresTracking && (currentAiStatus === 'INIT' || ((currentAiStatus === 'LOST' || currentAiStatus === 'TOO_CLOSE') && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED'))) { 
         lastRenderTime = now;
         renderer.render(scene, camera); return; 
       }
@@ -455,9 +474,10 @@ export default function EyeComfortApp() {
 
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(state.module) || (state.module === 'sop' && state.phase === 'LOOKING');
       
+      // 強化點一整合：新增 TOO_CLOSE 狀態的時間凍結
       if (requiresTracking) {
         if (state.aiStatus === 'INIT') return;
-        if (state.aiStatus === 'LOST' && !state.isResting && state.phase !== 'COMPLETED') return;
+        if ((state.aiStatus === 'LOST' || state.aiStatus === 'TOO_CLOSE') && !state.isResting && state.phase !== 'COMPLETED') return;
       }
 
       if (requiresTracking && state.isResting) {
@@ -533,7 +553,6 @@ export default function EyeComfortApp() {
     
     if (noSleepRef.current) noSleepRef.current.enable();
 
-    // 擴大 AI 啟動範圍：加入 amsler 與 astigmatism
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(type)) {
       gameState.current.aiStatus = 'INIT'; 
       setTrackingState('INITIALIZING');
@@ -789,6 +808,17 @@ export default function EyeComfortApp() {
               <h2 className="text-[#00ffcc] text-[28px] font-bold mb-4 tracking-widest">AI 視覺引擎載入中</h2>
               <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
                 正在啟動前置鏡頭與安全辨識模組...<br/>這可能需要幾秒鐘的時間，請稍候。
+              </p>
+            </div>
+          )}
+
+          {/* 強化點一：距離過近警告 (黃色) */}
+          {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
+            <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
+              <div className="text-[60px] mb-4">🛑</div>
+              <h2 className="text-[#E5B55E] text-[28px] font-bold mb-4 tracking-widest">距離螢幕太近</h2>
+              <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
+                訓練與時間已自動暫停。<br/>請退後至 <strong className="text-[#00ffcc]">30 公分安全距離</strong> 外。
               </p>
             </div>
           )}

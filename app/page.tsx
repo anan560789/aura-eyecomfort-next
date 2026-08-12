@@ -26,7 +26,7 @@ const focusTexts = [
 ];
 
 // ==========================================
-// 2. 合規的日常保健學理說明 (完整保留)
+// 2. 合規的日常保健學理說明
 // ==========================================
 const medicalPrinciples: Record<string, any> = {
   sop: { icon: "🚀", title: "45秒快速舒緩", color: "#FF6B6B", principle: "此模組結合了「睫狀肌放鬆」、「動態視覺刺激」與「淚膜穩定」的保健概念。<br><br>透過注視遠近變化的球體，輔助舒緩水晶體對焦壓力；最後的用力閉眼動作，可協助眼瞼板腺分泌油脂，幫助維持淚膜水分。" },
@@ -634,7 +634,7 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 新增的視圖：RPE 與脂褐質說明頁面 (INFO_RPE) */}
+      {/* 視圖 2.5: RPE 與脂褐質 (Lipofuscin) 純學理說明頁面 (INFO_RPE) */}
       {currentView === 'INFO_RPE' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -648,35 +648,38 @@ export default function EyeComfortApp() {
               </p>
               <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-3">
                 <li><strong className="text-[#fffdd0]">1. 運輸營養素：</strong>作為脈絡膜微血管與視網膜間的橋樑，將維生素、氧氣等營養素精準運送給感光細胞。</li>
-                <li><strong className="text-[#fffdd0]">2. 排除代謝廢物：</strong>感光細胞每天運作會產生大量代謝廢物，RPE 就像垃圾處理廠，負責吞噬並分解這些廢物。若 RPE 衰退，廢物將堆積形成無法代謝的<strong>「脂褐質 (Lipofuscin)」</strong>與隱結 (Drusen)。</li>
+                <li><strong className="text-[#fffdd0]">2. 排除代謝廢物：</strong>感光細胞每天運作會產生大量代謝廢物，RPE 就像垃圾處理廠，負責吞噬並分解這些廢物。</li>
                 <li><strong className="text-[#fffdd0]">3. 分泌抗氧化因子：</strong>RPE 能分泌多種因子，維持眼內的抗氧化能力，保護脆弱的感光細胞免受強光與氧化壓力破壞。</li>
                 <li><strong className="text-[#fffdd0]">4. 穩定視網膜結構：</strong>作為血視網膜屏障（Blood-Retinal Barrier）的重要部分，維持視網膜與脈絡膜界面的組織結構穩固。</li>
-                <li><strong className="text-[#fffdd0]">5. 預防黃斑部病變：</strong>維持 RPE 的健康活力，能有效避免脂褐質堆積引發的發炎反應，是延緩老化、降低黃斑部病變 (AMD) 發生風險的核心機制。</li>
+                <li><strong className="text-[#fffdd0]">5. 預防黃斑部病變：</strong>維持 RPE 的健康活力，能有效避免老化廢物堆積引發的發炎反應，是降低老年性黃斑部病變 (AMD) 發生風險的核心機制。</li>
               </ul>
             </div>
 
-            <div className="bg-[#162b2b] p-6 rounded-xl border-l-4 border-[#00ffcc] mb-6">
-              <h3 className="text-[#00ffcc] text-[22px] font-bold mb-3">🔬 Propolins 在 RPE 的前臨床研究</h3>
+            <div className="bg-[#162b2b] p-6 rounded-xl border-l-4 border-[#ff4d4d] mb-6">
+              <h3 className="text-[#ff4d4d] text-[22px] font-bold mb-3">☣️ 視力的隱形殺手：脂褐質 (Lipofuscin)</h3>
               <p className="text-[#fffdd0] text-[16px] leading-[1.8] mb-4">
-                根據相關專利與研究，神經滋養物質 Propolins（特別是專利式(II) 對應之 Propolin G）最適合定位在作用於 RPE：
+                在視覺運作的過程中，感光細胞會不斷代謝並產生廢棄物。這些廢棄物被 RPE 吞噬後，會殘留下無法被完全分解的物質，稱為<strong>「脂褐質 (Lipofuscin)」</strong>（一種衰老色素）。脂褐質對眼睛的影響極具破壞性：
               </p>
               <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-2">
-                <li><strong className="text-[#fffdd0]">細胞層級保護：</strong>在 ARPE-19 細胞實驗中，顯示能提高氧化或缺氧損傷下的細胞存活率。它的機制是提供受損細胞保護，而非無限制刺激健康細胞增生。</li>
-                <li><strong className="text-[#fffdd0]">動物實驗恢復：</strong>在 NaIO3 誘導的乾性 AMD 大鼠模型中，使用 1% 專利滴眼液能讓 ERG c-wave 回升約 4 倍，顯示 RPE 功能獲得部分顯著恢復。</li>
+                <li><strong className="text-[#fffdd0]">引發光毒性反應：</strong>脂褐質含有具備光毒性的螢光物質（如 A2E），當受到藍光或強光照射時，會產生大量的自由基與「氧化壓力」。</li>
+                <li><strong className="text-[#fffdd0]">摧毀細胞機能：</strong>過多的脂褐質會破壞 RPE 細胞內的溶酶體與粒線體，導致 RPE 細胞逐漸凋亡。</li>
+                <li><strong className="text-[#fffdd0]">引發黃斑部病變：</strong>當 RPE 無法再處理廢物時，這些物質會堆積在視網膜底層形成「隱結 (Drusen)」，這是引發老年性黃斑部病變 (AMD) 和視力喪失的關鍵元凶。</li>
               </ul>
             </div>
 
-            <div className="mb-6 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d]">
-              <h3 className="text-[#ff4d4d] text-[18px] font-bold mb-2">⚠️ 證據界線與使用提醒</h3>
-              <p className="text-[#d1b0b0] text-[14px] leading-[1.8] m-0">
-                上述結果為細胞與動物的前臨床試驗證據。因此，不能直接換算成市售口服保健品的人體有效劑量，亦不能據此宣稱能預防或治療人體黃斑部病變 (AMD)。市售口服蜂膠膠囊並非無菌眼藥水，絕不可自行滴入眼睛。
+            <div className="bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#00ffcc] mb-6">
+              <h3 className="text-[#00ffcc] text-[22px] font-bold mb-3">🛡️ RPE 是對抗脂褐質的唯一防線</h3>
+              <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0">
+                RPE 是視網膜中唯一具備強大吞噬與代謝機制的細胞。健康的 RPE 能夠透過自身的抗氧化系統，中和脂褐質產生的毒性，並盡可能減緩其堆積速度。<br/><br/>
+                一旦 RPE 失去活力或受損，脂褐質就會如同無法被清理的「核廢料」般引發一連串的發炎反應，最終導致上方依賴它的感光細胞餓死或毒死。因此，<strong>給予 RPE 充足的專屬滋養與抗氧化保護，維持 RPE 細胞的存活率與代謝活力，是預防眼部老化與病變的重中之重。</strong>
               </p>
             </div>
             
             <div className="bg-[#2a1f1a] p-4 rounded-lg border border-[#e5b55e]">
-              <h3 className="text-[#e5b55e] text-[16px] font-bold mb-2">📚 主要資料來源</h3>
+              <h3 className="text-[#e5b55e] text-[16px] font-bold mb-2">📚 醫學學理參考文獻</h3>
               <p className="text-[#a5b6cf] text-[13px] leading-[1.6] m-0">
-                中華民國發明專利第I5105744號〈用於治療眼疾的化合物〉；台灣綠蜂膠萃取物眼疾專利。
+                Sparrow, J. R., & Boulton, M. (2005). RPE lipofuscin and its role in retinal pathobiology. Experimental eye research.<br/>
+                Boulton, M., et al. (2001). Lipofuscin is a photoinducible free radical generator. Journal of photochemistry and photobiology.
               </p>
             </div>
           </div>

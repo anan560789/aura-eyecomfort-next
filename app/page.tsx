@@ -91,24 +91,22 @@ export default function EyeComfortApp() {
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
         }
 
-        // 專利級核心：讀取眼球向量與閉眼向量 (加入 explicitly type s: any 解決編譯錯誤)
         if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
           const shapes = results.faceBlendshapes[0].categories;
-          
           const lookShapes = shapes.filter((s: any) => 
             ['eyeLookInLeft', 'eyeLookOutLeft', 'eyeLookUpLeft', 'eyeLookDownLeft',
              'eyeLookInRight', 'eyeLookOutRight', 'eyeLookUpRight', 'eyeLookDownRight'].includes(s.categoryName)
           );
-          
           const blinkShapes = shapes.filter((s: any) => ['eyeBlinkLeft', 'eyeBlinkRight'].includes(s.categoryName));
 
-          if (lookShapes.some((s: any) => s.score > 0.65)) isGazeLost = true;
-          if (blinkShapes.some((s: any) => s.score > 0.6)) isEyesClosed = true;
+          if (lookShapes.some((s: any) => s.score > 0.60)) isGazeLost = true;
+          if (blinkShapes.some((s: any) => s.score > 0.55)) isEyesClosed = true;
         }
 
         const isSopClosing = gameState.current.module === 'sop' && gameState.current.phase === 'CLOSING';
 
-        if (!isSopClosing && (results.faceLandmarks.length === 0 || yawRatio > 2.0 || pitchRatio > 2.0 || isGazeLost || isEyesClosed)) {
+        // 閾值收緊到 1.6：上下抬頭或左右轉頭稍微明顯就會被抓到
+        if (!isSopClosing && (results.faceLandmarks.length === 0 || yawRatio > 1.6 || pitchRatio > 1.6 || isGazeLost || isEyesClosed)) {
           lostFrames++;
         } else {
           lostFrames = 0;
@@ -257,7 +255,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫
+  // Three.js 引擎與動畫 (完美還原 Mod2 原始 3D 拉伸)
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -338,7 +336,8 @@ export default function EyeComfortApp() {
         renderer.render(scene, camera); return; 
       }
 
-      const delta = Math.min(now - lastRenderTime, 35);
+      // 解除過度嚴格的防掉幀機制，將上限放寬至 100ms，保留時間軸的滑順補償
+      const delta = Math.min(now - lastRenderTime, 100);
       lastRenderTime = now;
       gameState.current.activeTimeAcc += delta;
       
@@ -357,22 +356,17 @@ export default function EyeComfortApp() {
         }
       }
       
+      // ===== 核心優化：100% 還原最完美的第一版 Mod 2 Z軸拉伸邏輯 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
-        const speed = timeDelta * 0.8; 
-        
-        const distToBall = 35; 
-        const vFovRad = (camera.fov * Math.PI) / 180;
-        const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToBall;
-        const visibleWidth = visibleHeight * camera.aspect;
-        
-        const edgeX = visibleWidth / 2;
-        const edgeY = visibleHeight / 2;
-        
-        const ampX = edgeX - 0.5; 
-        const ampY = Math.min(edgeY * 0.6, 12); 
-        
-        stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, -30);
+        const speed = timeDelta; 
         stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
+        const isMobile = window.innerWidth < 600;
+        // 原始完美的 Z 軸前後無垠穿梭 (-10 到 -50) 與固定邊界
+        stretchOrb.position.set(
+          Math.sin(speed) * (isMobile ? 8.5 : 18), 
+          Math.sin(speed * 2) * (isMobile ? 12 : 8), 
+          -30 + Math.sin(speed * 0.5) * 20
+        );
       }
       
       if (mod === 'breathe' || mod === 'chaser') { particleSystem.rotation.y += 0.0005; particleSystem.rotation.z += 0.0002; }
@@ -519,14 +513,20 @@ export default function EyeComfortApp() {
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
   // ==========================================
-  // 視圖切換與按鈕處理
+  // 視圖切換與按鈕處理 (修復模組切換時的狀態洩漏)
   // ==========================================
   const startTraining = (type: string) => {
     if (audioRef.current.ctx?.state === 'suspended') { audioRef.current.ctx.resume(); }
 
     setActiveModule(type); setCurrentView('TRAINING');
     const state = gameState.current;
-    state.module = type; state.isResting = false; state.restTimeLeft = 0; state.activeTimeAcc = 0;
+    
+    // 核心修復：不管前一個模組狀態為何，每次啟動絕對重置為 LOOKING 階段！
+    state.module = type; 
+    state.phase = 'LOOKING'; 
+    state.isResting = false; 
+    state.restTimeLeft = 0; 
+    state.activeTimeAcc = 0;
     
     if (noSleepRef.current) noSleepRef.current.enable();
 
@@ -536,7 +536,7 @@ export default function EyeComfortApp() {
       initEyeTracking(); 
     }
     
-    if (type === 'sop') { state.cycle = 1; state.phase = 'LOOKING'; state.sopTimeLeft = 10; playBGM('/game1.mp3'); }
+    if (type === 'sop') { state.cycle = 1; state.sopTimeLeft = 10; playBGM('/game1.mp3'); }
     else if (type === 'stretch') { state.stretchTimeLeft = 45; playBGM('/game2.mp3'); }
     else if (type === 'chaser') { state.chaserTimeLeft = 60; state.chaserScore = 0; playBGM('/game3.mp3'); }
     else if (type === 'breathe') { state.breatheTimeLeft = 60; state.breathPhase = 'INHALE'; playBGM('/game4.mp3'); }

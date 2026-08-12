@@ -52,7 +52,6 @@ export default function EyeComfortApp() {
   // ==========================================
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION'>('IDLE');
   
-  // 核心修復：使用 Ref 儲存最新的 trackingState，避免觸發 Three.js 重新渲染
   const trackingStateRef = useRef(trackingState);
   useEffect(() => { trackingStateRef.current = trackingState; }, [trackingState]);
 
@@ -82,14 +81,19 @@ export default function EyeComfortApp() {
       if (videoRef.current.readyState >= 2) {
         const results = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-          isTrackingRef.current = true;
-          setTrackingState('TRACKING');
           lostFrames = 0;
+          if (!isTrackingRef.current) {
+            isTrackingRef.current = true;
+            setTrackingState('TRACKING');
+            trackingStateRef.current = 'TRACKING';
+          }
         } else {
           lostFrames++;
-          if (lostFrames > 15) {
+          // 降低容錯率：大約 3 frames (0.3秒) 抓不到立刻紅屏防呆
+          if (lostFrames > 3 && isTrackingRef.current) {
             isTrackingRef.current = false;
             setTrackingState('LOST');
+            trackingStateRef.current = 'LOST';
           }
         }
       }
@@ -154,7 +158,8 @@ export default function EyeComfortApp() {
     audioRef.current.bgm = new Audio(); audioRef.current.bgm.loop = true;
     const enableAudio = () => { if (audioRef.current.ctx?.state === 'suspended') audioRef.current.ctx.resume(); };
     window.addEventListener('click', enableAudio, { once: true });
-    return () => window.removeEventListener('click', enableAudio);
+    window.addEventListener('touchstart', enableAudio, { once: true });
+    return () => { window.removeEventListener('click', enableAudio); window.removeEventListener('touchstart', enableAudio); };
   }, []);
 
   const playDingSound = useCallback(() => {
@@ -230,7 +235,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (已移除 trackingState 依賴)
+  // Three.js 引擎與動畫 (完美滑順軌跡版)
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -246,6 +251,7 @@ export default function EyeComfortApp() {
     focusTarget.add(new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 16), coreMat)); sopGroup.add(focusTarget); scene.add(sopGroup);
 
     const stretchGroup = new THREE.Group();
+    // 光球半徑維持 1.5
     const stretchOrb = new THREE.Mesh(new THREE.SphereGeometry(1.5, 32, 32), new THREE.MeshBasicMaterial({ color: 0xff9900 }));
     stretchOrb.add(new THREE.PointLight(0xffaa00, 2.5, 60)); stretchGroup.add(stretchOrb); scene.add(stretchGroup);
 
@@ -303,19 +309,20 @@ export default function EyeComfortApp() {
       if (mod === 'DASHBOARD') { renderer.render(new THREE.Scene(), camera); return; }
 
       const now = performance.now();
-      const delta = now - lastRenderTime;
-      lastRenderTime = now;
-
       const requiresTracking = ['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(mod);
       const currentTrackState = trackingStateRef.current;
       
-      // 核心修復：如果 AI 正在載入或丟失，只渲染當前畫面，但不推進時間與動畫！
-      if (requiresTracking) {
-        if (currentTrackState === 'INITIALIZING') { renderer.render(scene, camera); return; }
-        if (currentTrackState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED') { renderer.render(scene, camera); return; }
+      // 凍結狀態邏輯：更新 lastRenderTime 但不推進 activeTimeAcc
+      if (requiresTracking && (currentTrackState === 'INITIALIZING' || (currentTrackState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED'))) { 
+        lastRenderTime = now;
+        renderer.render(scene, camera); return; 
       }
 
+      // 防卡頓機制：限制單次 delta 最大 50ms
+      const delta = Math.min(now - lastRenderTime, 50);
+      lastRenderTime = now;
       gameState.current.activeTimeAcc += delta;
+      
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
       
       if (mod === 'sop' && gameState.current.phase !== 'COMPLETED') {
@@ -330,10 +337,28 @@ export default function EyeComfortApp() {
           if (ball.position.z > camera.position.z) { if(ball.parent) ball.parent.remove(ball); ball.geometry.dispose(); ball.material.dispose(); stimulusBalls.splice(i, 1); }
         }
       }
+      
+      // ===== 核心優化：模組 2 精準 1/3 邊界軌跡 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
-        const speed = timeDelta; stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1); const isMobile = window.innerWidth < 600;
-        stretchOrb.position.set(Math.sin(speed) * (isMobile ? 8.5 : 18), Math.sin(speed * 2) * (isMobile ? 12 : 8), -30 + Math.sin(speed * 0.5) * 20);
+        const speed = timeDelta * 0.8; // 稍微放慢一點，讓移動更平滑優雅
+        
+        // 數學演算：利用 FOV 動態計算在 Z=-30 時的螢幕真實寬高
+        const distToBall = 35; // camera Z(5) - orb Z(-30)
+        const vFovRad = (camera.fov * Math.PI) / 180;
+        const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToBall; // 約 53.7
+        const visibleWidth = visibleHeight * camera.aspect;
+        
+        const edgeX = visibleWidth / 2;
+        const edgeY = visibleHeight / 2;
+        
+        // 球半徑 1.5。允許最多 1/3 的球 (距離1.0) 超出邊界，球心最高可達 edgeX - 0.5
+        const ampX = edgeX - 0.5;
+        // Y 軸稍微保守一點，因為上下有黑色的 UI 文字框會擋住
+        const ampY = Math.min(edgeY * 0.6, 12); 
+        
+        stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, -30);
       }
+      
       if (mod === 'breathe' || mod === 'chaser') { particleSystem.rotation.y += 0.0005; particleSystem.rotation.z += 0.0002; }
       if (mod === 'chaser' && gameState.current.chaserTimeLeft > 0) {
         chaserOrb.position.z -= 0.6;
@@ -357,13 +382,11 @@ export default function EyeComfortApp() {
     animate();
     const handleResize = () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
     window.addEventListener('resize', handleResize);
-    
-    // 依賴陣列中移除了 trackingState，確保引擎不會被重複初始化！
     return () => { window.removeEventListener('resize', handleResize); cancelAnimationFrame(animationFrameId); if (canvasRef.current) canvasRef.current.removeChild(renderer.domElement); renderer.dispose(); };
   }, [playDingSound]); 
 
   // ==========================================
-  // 計時器邏輯 (結合 AI 凍結)
+  // 計時器邏輯
   // ==========================================
   const updateUI = useCallback(() => {
     const state = gameState.current;
@@ -419,7 +442,7 @@ export default function EyeComfortApp() {
       const requiresTracking = ['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(state.module);
       const currentTrackState = trackingStateRef.current;
       
-      // 核心修復：如果 AI 正在載入或失去視線，直接 return 阻止計時器運作！
+      // 確保 AI 載入中或視線遺失時，時間完全凍結
       if (requiresTracking) {
         if (currentTrackState === 'INITIALIZING') return;
         if (currentTrackState === 'LOST' && !state.isResting && state.phase !== 'COMPLETED') return;
@@ -485,6 +508,11 @@ export default function EyeComfortApp() {
   // 視圖切換與按鈕處理
   // ==========================================
   const startTraining = (type: string) => {
+    // 點擊瞬間喚醒 AudioContext，修復 iOS 靜音問題
+    if (audioRef.current.ctx?.state === 'suspended') {
+      audioRef.current.ctx.resume();
+    }
+
     setActiveModule(type); setCurrentView('TRAINING');
     const state = gameState.current;
     state.module = type; state.isResting = false; state.restTimeLeft = 0; state.activeTimeAcc = 0;
@@ -735,7 +763,7 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 全新修復：載入中全螢幕等待畫面 (完全凍結時間) */}
+          {/* 載入中全螢幕等待畫面 (完全凍結時間) */}
           {trackingState === 'INITIALIZING' && (
             <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
               <div className="text-[60px] mb-4 animate-spin">⏳</div>
@@ -746,7 +774,7 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 失去追蹤的防呆紅屏警告 (優雅降級) */}
+          {/* 失去追蹤的防呆紅屏警告 (優雅降級，幾乎零延遲觸發) */}
           {trackingState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">⚠️</div>

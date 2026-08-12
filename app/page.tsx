@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
+// 【強化點三】引入 WebXR 的 VRButton 模組
+import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
 import liff from '@line/liff';
 import { createClient } from '@supabase/supabase-js';
 // @ts-ignore
@@ -270,11 +272,56 @@ export default function EyeComfortApp() {
     }, 100);
   }, []);
 
+  // ==========================================
+  // 【強化點四】邊緣運算：離線資料同步模組
+  // ==========================================
+  const syncOfflineLogs = useCallback(async () => {
+    const offlineKey = 'aura_offline_logs';
+    const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
+    if (offlineLogs.length === 0) return;
+
+    try {
+      // 整批上傳暫存的訓練紀錄
+      const { error } = await supabase.from('training_logs').insert(offlineLogs);
+      if (!error) {
+        console.log(`✅ 成功重傳 ${offlineLogs.length} 筆離線訓練紀錄至雲端`);
+        localStorage.removeItem(offlineKey); // 成功後清空邊緣暫存
+      } else {
+        console.error('❌ 重傳失敗，等待下次網路恢復', error);
+      }
+    } catch (err) {
+      console.error('❌ 重傳異常，保留於邊緣端', err);
+    }
+  }, []);
+
+  // 監聽網路連線狀態，並在元件掛載時嘗試同步一次
+  useEffect(() => {
+    window.addEventListener('online', syncOfflineLogs);
+    syncOfflineLogs(); // 初始化檢查
+    return () => window.removeEventListener('online', syncOfflineLogs);
+  }, [syncOfflineLogs]);
+
   const logTraining = async (moduleName: string, durationSec: number) => { 
     if (!lineProfile.uid || lineProfile.uid === '未登入') return; 
+    
+    const logData = { 
+      line_uid: lineProfile.uid, 
+      module_name: moduleName, 
+      duration: durationSec,
+      created_at: new Date().toISOString() // 固定訓練當下時間
+    };
+
     try { 
-      await supabase.from('training_logs').insert([{ line_uid: lineProfile.uid, module_name: moduleName, duration: durationSec }]); 
-    } catch (err) {} 
+      const { error } = await supabase.from('training_logs').insert([logData]); 
+      if (error) throw error;
+    } catch (err) {
+      // 網路斷線或資料庫異常時，啟動非同步容錯機制
+      console.warn("⚠️ 網路異常，訓練紀錄暫存至邊緣端 LocalStorage");
+      const offlineKey = 'aura_offline_logs';
+      const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
+      offlineLogs.push(logData);
+      localStorage.setItem(offlineKey, JSON.stringify(offlineLogs));
+    } 
   };
   
   const getTodayString = () => { 
@@ -370,7 +417,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 
+  // Three.js 引擎與動畫 (WebXR 空間運算升級版)
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -380,7 +427,19 @@ export default function EyeComfortApp() {
     camera.position.z = 5;
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); 
     renderer.setSize(window.innerWidth, window.innerHeight);
+    
+    // 【強化點三】啟用 WebXR 空間運算支援
+    renderer.xr.enabled = true;
+    const vrButton = VRButton.createButton(renderer);
+    // 自訂 VR 按鈕樣式，讓它浮動在 UI 上層
+    vrButton.style.position = 'absolute';
+    vrButton.style.bottom = '20px';
+    vrButton.style.left = '50%';
+    vrButton.style.transform = 'translateX(-50%)';
+    vrButton.style.zIndex = '9999';
     canvasRef.current.appendChild(renderer.domElement); 
+    canvasRef.current.appendChild(vrButton); // 掛載 VR 啟動按鈕
+
     scene.add(new THREE.AmbientLight(0xfffdd0, 0.6));
 
     const sopGroup = new THREE.Group(); sopGroup.position.y = 12;
@@ -416,7 +475,6 @@ export default function EyeComfortApp() {
     scene.add(breatheGroup);
 
     const focusGroup = new THREE.Group();
-    // 修正：加入 THREE. 前綴
     const focusRing = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.8, 32, 1, 0, Math.PI * 1.7), new THREE.MeshBasicMaterial({ color: 0xff3366, side: THREE.DoubleSide, transparent: true }));
     focusGroup.add(focusRing); 
     scene.add(focusGroup);
@@ -475,11 +533,10 @@ export default function EyeComfortApp() {
       }
     };
 
-    let animationFrameId: number;
+    // 【修改】將動畫引擎轉由 WebXR 的 setAnimationLoop 接管
     let lastRenderTime = performance.now();
 
     const animate = () => {
-      animationFrameId = requestAnimationFrame(animate);
       const mod = gameState.current.module;
       if (mod === 'DASHBOARD') { renderer.render(new THREE.Scene(), camera); return; }
 
@@ -577,7 +634,8 @@ export default function EyeComfortApp() {
       renderer.render(scene, camera);
     };
     
-    animate();
+    // 【修改】透過 WebXR 機制設定迴圈
+    renderer.setAnimationLoop(animate);
     
     const handleResize = () => { 
       camera.aspect = window.innerWidth / window.innerHeight; 
@@ -585,10 +643,15 @@ export default function EyeComfortApp() {
       renderer.setSize(window.innerWidth, window.innerHeight); 
     };
     window.addEventListener('resize', handleResize);
+    
     return () => { 
       window.removeEventListener('resize', handleResize); 
-      cancelAnimationFrame(animationFrameId); 
-      if (canvasRef.current) canvasRef.current.removeChild(renderer.domElement); 
+      // 【修改】清理時解除 AnimationLoop
+      renderer.setAnimationLoop(null); 
+      if (canvasRef.current) {
+        if (canvasRef.current.contains(renderer.domElement)) canvasRef.current.removeChild(renderer.domElement); 
+        if (canvasRef.current.contains(vrButton)) canvasRef.current.removeChild(vrButton);
+      }
       renderer.dispose(); 
     };
   }, [playDingSound]); 

@@ -107,7 +107,6 @@ export default function EyeComfortApp() {
                     isLost = true;
                 }
             }
-            // 核心調整：實體距離放寬至約 18 公分 (0.30 佔比)，但 UI 文案仍保持 20 公分衛教標準
             if (!isLost && !isSopClosing && eyeDistance > 0.30) {
                 isTooClose = true;
             }
@@ -258,14 +257,10 @@ export default function EyeComfortApp() {
     setCalendarData({ todayCycles, monthCycles, days, today: todayDate, year, month });
   }, []);
 
-  // ==========================================
-  // 核心修復 2：鋼鐵降級分享機制 (保證點擊必有反應)
-  // ==========================================
   const handleShareCalendar = async () => {
     const name = lineProfile.name || '我';
     const textToShare = `👁️ Aura EyeGym 視覺復健打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配醫師推薦營養配方，補充眼睛關鍵營養！\n👉 https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID || '2011063080-EDRCTHXv'}`;
 
-    // 終極防線：使用傳統 DOM 操作進行隱藏複製，確保 100% 成功率
     const fallbackCopy = () => {
       try {
         const textArea = document.createElement("textarea");
@@ -407,15 +402,33 @@ export default function EyeComfortApp() {
         }
       }
       
+      // ===== 核心修復：結合無垠 Z 軸與動態 1/3 邊界限制 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
         gameState.current.stretchAngle += 0.025; 
         const speed = gameState.current.stretchAngle; 
         stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
-        const isMobile = window.innerWidth < 600;
+        
+        // 恢復無垠深淺的 Z 軸穿梭軌跡 (-10 到 -50)
+        const currentZ = -30 + Math.sin(speed * 0.5) * 20;
+        
+        // 根據目前的 Z 軸深度，動態計算該深度的螢幕可視邊界寬高
+        const distToCamera = camera.position.z - currentZ;
+        const vFovRad = (camera.fov * Math.PI) / 180;
+        const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToCamera;
+        const visibleWidth = visibleHeight * camera.aspect;
+        
+        const edgeX = visibleWidth / 2;
+        const edgeY = visibleHeight / 2;
+        
+        // 光球直徑為 3.0 (半徑1.5)，允許 1/3 (即 1.0) 超出邊界
+        // 故中心點最大可達 edgeX - 0.5，精準控制！
+        const ampX = edgeX - 0.5; 
+        const ampY = Math.min(edgeY * 0.6, 12); 
+        
         stretchOrb.position.set(
-          Math.sin(speed) * (isMobile ? 8.5 : 18), 
-          Math.sin(speed * 2) * (isMobile ? 12 : 8), 
-          -30 + Math.sin(speed * 0.5) * 20
+          Math.sin(speed) * ampX, 
+          Math.sin(speed * 2) * ampY, 
+          currentZ
         );
       }
       
@@ -451,7 +464,6 @@ export default function EyeComfortApp() {
   const updateUI = useCallback(() => {
     const state = gameState.current;
     
-    // 依然保持「20 公分」的衛教文字設定
     const completionReminder = (
       <div className="text-[17px] text-[#E5B55E] mt-4 leading-[1.6] px-4">
         💡 溫馨提醒：訓練時為達最佳視覺張力可靠近至 20 公分，<br/>但日常滑手機請務必保持 <span className="text-[#00ffcc] font-bold">30~40 公分</span> 距離喔！

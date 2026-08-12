@@ -11,6 +11,13 @@ export const metadata: Metadata = {
     title: 'Aura EyeGym | 數位視覺復健中心',
     description: '結合 AI 動眼追蹤與專利演算法的專屬復健系統',
     siteName: 'Aura EyeGym',
+    images: [
+      {
+        url: '/opengraph-image.jpg', // 這裡會自動去對應 public 資料夾內的圖片
+        width: 1200,
+        height: 630,
+      },
+    ],
   }
 }
 

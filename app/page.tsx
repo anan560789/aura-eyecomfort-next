@@ -40,7 +40,8 @@ export default function EyeComfortApp() {
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
   const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
-  const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: string, top: string, showContinue: boolean, showInput: boolean }>({ title: '', timer: '', top: '70%', showContinue: false, showInput: false });
+  // 核心修改：將 timer 的型別放寬為 React.ReactNode，允許塞入衛教 JSX 標籤
+  const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: React.ReactNode, top: string, showContinue: boolean, showInput: boolean }>({ title: '', timer: '', top: '70%', showContinue: false, showInput: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
 
@@ -110,8 +111,8 @@ export default function EyeComfortApp() {
                     isLost = true;
                 }
             }
-            // 閉環控制觸發點：雙眼間距大於 0.18，代表臉部已貼近螢幕小於 30 公分
-            if (!isLost && !isSopClosing && eyeDistance > 0.18) {
+            // 閾值優化：從 0.18 放大至 0.26，允許使用者靠近至 20 公分，獲取最大 3D 張力
+            if (!isLost && !isSopClosing && eyeDistance > 0.26) {
                 isTooClose = true;
             }
         }
@@ -126,13 +127,11 @@ export default function EyeComfortApp() {
         } else {
           lostFrames = 0;
           if (isTooClose) {
-            // 切換至過近防呆狀態
             if (gameState.current.aiStatus !== 'TOO_CLOSE') {
               gameState.current.aiStatus = 'TOO_CLOSE';
               setTrackingState('TOO_CLOSE');
             }
           } else {
-            // 恢復正常追蹤
             if (gameState.current.aiStatus !== 'TRACKING') {
               gameState.current.aiStatus = 'TRACKING';
               setTrackingState('TRACKING');
@@ -140,7 +139,6 @@ export default function EyeComfortApp() {
           }
         }
         
-        // 依然保留失去視線的最高優先級容錯
         if ((lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') || (lostFrames > 3 && gameState.current.aiStatus === 'TOO_CLOSE')) {
           gameState.current.aiStatus = 'LOST';
           setTrackingState('LOST');
@@ -356,7 +354,6 @@ export default function EyeComfortApp() {
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(mod) || (mod === 'sop' && gameState.current.phase === 'LOOKING');
       const currentAiStatus = gameState.current.aiStatus;
       
-      // 強化點一整合：新增 TOO_CLOSE 狀態的動畫凍結
       if (requiresTracking && (currentAiStatus === 'INIT' || ((currentAiStatus === 'LOST' || currentAiStatus === 'TOO_CLOSE') && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED'))) { 
         lastRenderTime = now;
         renderer.render(scene, camera); return; 
@@ -419,35 +416,43 @@ export default function EyeComfortApp() {
   }, [playDingSound]); 
 
   // ==========================================
-  // 計時器邏輯
+  // 計時器邏輯與全域衛教結語 (強化點二)
   // ==========================================
   const updateUI = useCallback(() => {
     const state = gameState.current;
+    
+    // 全域溫馨提醒元件：在完成畫面統一加入
+    const completionReminder = (
+      <div className="text-[17px] text-[#E5B55E] mt-4 leading-[1.6] px-4">
+        💡 溫馨提醒：訓練時為達最佳視覺張力可靠近至 20 公分，<br/>但日常滑手機請務必保持 <span className="text-[#00ffcc] font-bold">30~40 公分</span> 距離喔！
+      </div>
+    );
+
     if (state.module === 'sop') {
-      if (state.phase === 'COMPLETED') setUiState({ top: '35%', title: "🎉 3 回合深層放鬆完成！", timer: '', showContinue: false, showInput: false });
+      if (state.phase === 'COMPLETED') setUiState({ top: '35%', title: "🎉 3 回合深層放鬆完成！", timer: completionReminder, showContinue: false, showInput: false });
       else if (state.phase === 'LOOKING') setUiState({ top: '70%', title: <div className="text-center w-full">{`(第 ${state.cycle}/${maxCycles} 回合)`}<br/>請柔和注視中心橘點</div>, timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false, showInput: false });
       else if (state.phase === 'CLOSING') setUiState({ top: '70%', title: "請用力閉上雙眼，徹底放鬆", timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false, showInput: false });
     } else if (state.module === 'stretch') {
       if (state.stretchTimeLeft > 0) setUiState({ top: '80%', title: <div className="text-center w-full">保持頭部靜止<br/>跟隨光球移動伸展眼肌</div>, timer: `剩餘 ${state.stretchTimeLeft} 秒`, showContinue: false, showInput: false });
       else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
-      else setUiState({ top: '50%', title: "🎉 眼肌與焦距重訓完成！", timer: '', showContinue: false, showInput: false });
+      else setUiState({ top: '50%', title: "🎉 眼肌與焦距重訓完成！", timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'chaser') {
       if (state.chaserTimeLeft > 0) setUiState({ top: '80%', title: <div className="text-center w-full">【睫狀肌深空追光】<br/>死盯流星飛向最深處直到消失<br/>(已追蹤: {state.chaserScore} 顆)</div>, timer: `遊戲剩餘：${state.chaserTimeLeft} 秒`, showContinue: false, showInput: false });
       else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
-      else setUiState({ top: '50%', title: <div className="text-center w-full">🎮 遊戲結束！<br/>您成功追蹤了 {state.chaserScore} 顆深空流星</div>, timer: "睫狀肌已獲得充分的遠眺放鬆", showContinue: false, showInput: false });
+      else setUiState({ top: '50%', title: <div className="text-center w-full">🎮 遊戲結束！<br/>您成功追蹤了 {state.chaserScore} 顆深空流星</div>, timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'breathe') {
       if (state.breatheTimeLeft > 0) {
         const action = state.breathPhase === 'INHALE' ? "跟隨星雲【緩慢吸氣】" : "跟隨星雲【徹底吐氣】";
         setUiState({ top: '85%', title: <div className="text-center w-full">{action}<br/>(請不要對焦任何星星，放寬視野)</div>, timer: `深度放鬆中：${state.breatheTimeLeft} 秒`, showContinue: false, showInput: false });
       } else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
-      else setUiState({ top: '50%', title: "🌌 視覺神經與自律神經已深度重置", timer: "現在您的眼睛處於最佳狀態", showContinue: false, showInput: false });
+      else setUiState({ top: '50%', title: "🌌 視覺神經與自律神經已深度重置", timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'focus') {
       if (state.isWaitingForRightEye) setUiState({ top: '70%', title: <div className="text-center w-full text-[#00ffcc] mb-2">👁️ 左眼訓練完成！<br/>請換遮左眼，準備進行【右眼】重訓</div>, timer: '', showContinue: true, showInput: false });
       else if (state.focusTimeLeft > 0) {
         const eye = state.focusTimeLeft > 60 ? "👁️ 請遮住右眼，訓練【左眼】" : "👁️ 換遮左眼，訓練【右眼】";
         setUiState({ top: '85%', title: <div className="w-full flex flex-col items-center justify-center text-center"><div className="text-[#00ffcc] mb-3">{eye}</div>{focusTexts[state.focusStep]}</div>, timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false, showInput: false });
       } else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
-      else setUiState({ top: '50%', title: <div className="w-full text-center flex flex-col items-center">🎯 睫狀肌幫浦重訓完成！<br/><br/><span className="text-[18px] text-[#FFD93D]">⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br/>建議接著進行前四個眼睛放鬆模組。</span></div>, timer: '', showContinue: false, showInput: false });
+      else setUiState({ top: '45%', title: <div className="w-full text-center flex flex-col items-center">🎯 睫狀肌幫浦重訓完成！<br/><br/><span className="text-[18px] text-[#FFD93D]">⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br/>建議接著進行前四個眼睛放鬆模組。</span></div>, timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'amsler' || state.module === 'astigmatism') {
       if (state.testPhase === 'LEFT_EYE_TEST' || state.testPhase === 'RIGHT_EYE_TEST') {
         const eye = state.testPhase === 'LEFT_EYE_TEST' ? "左眼" : "右眼"; const cover = state.testPhase === 'LEFT_EYE_TEST' ? "右眼" : "左眼";
@@ -474,7 +479,6 @@ export default function EyeComfortApp() {
 
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(state.module) || (state.module === 'sop' && state.phase === 'LOOKING');
       
-      // 強化點一整合：新增 TOO_CLOSE 狀態的時間凍結
       if (requiresTracking) {
         if (state.aiStatus === 'INIT') return;
         if ((state.aiStatus === 'LOST' || state.aiStatus === 'TOO_CLOSE') && !state.isResting && state.phase !== 'COMPLETED') return;
@@ -812,13 +816,13 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 強化點一：距離過近警告 (黃色) */}
+          {/* 距離過近警告 */}
           {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">🛑</div>
               <h2 className="text-[#E5B55E] text-[28px] font-bold mb-4 tracking-widest">距離螢幕太近</h2>
               <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                訓練與時間已自動暫停。<br/>請退後至 <strong className="text-[#00ffcc]">30 公分安全距離</strong> 外。
+                訓練與時間已自動暫停。<br/>請退後至 <strong className="text-[#00ffcc]">20 公分安全距離</strong> 外。
               </p>
             </div>
           )}

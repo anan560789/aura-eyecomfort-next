@@ -15,6 +15,8 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const maxCycles = 3;
+const focusDepths = [-1, -15, -35, -60]; // 補回：全域預設景深陣列
+const focusColors = [0xff3366, 0xff4d79, 0xff668c, 0xff809f];
 
 const focusTexts = [
   <div key="0"><span className="text-[#FF3366] font-bold">【極近對焦】</span><br/>用力看清缺口方向</div>,
@@ -22,7 +24,6 @@ const focusTexts = [
   <div key="2"><span className="text-[#ff668c] font-bold">【中遠距離】</span><br/>嘗試辨識缺口</div>,
   <div key="3"><span className="text-[#ff809f] font-bold">【深空極限】</span><br/>盡力即可，請放鬆不勉強</div>
 ];
-const focusColors = [0xff3366, 0xff4d79, 0xff668c, 0xff809f];
 
 const medicalPrinciples: Record<string, any> = {
   sop: { icon: "🚀", title: "45秒快速舒緩", color: "#FF6B6B", principle: "此模組結合了「睫狀肌放鬆」、「動態視覺刺激」與「淚膜穩定」的保健概念。<br><br>透過注視遠近變化的球體，輔助舒緩水晶體對焦壓力；最後的用力閉眼動作，可協助眼瞼板腺分泌油脂，幫助維持淚膜水分。" },
@@ -45,7 +46,7 @@ export default function EyeComfortApp() {
 
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION' | 'TOO_CLOSE'>('IDLE');
   
-  // 新增：AI 處方強度 UI 狀態
+  // 動態處方 UI 狀態
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -62,7 +63,7 @@ export default function EyeComfortApp() {
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
-    // 專利實作：動態處方參數快取
+    // 專利實作：動態處方參數
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 } 
   });
 
@@ -102,6 +103,7 @@ export default function EyeComfortApp() {
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > 1.6 || pitchRatio > 1.6) isLost = true;
             }
+            // 極限防呆：18公分 (佔比0.30)
             if (!isLost && !isSopClosing && eyeDistance > 0.30) {
                 isTooClose = true;
             }
@@ -232,17 +234,12 @@ export default function EyeComfortApp() {
     const todayCycles = parseInt(localStorage.getItem(`rehab_cycles_${todayStr}`) || '0', 10);
     setCalendarData({ todayCycles, monthCycles, days, today: todayDate, year, month });
 
-    // 專利實作：依據月循環次數，動態自適應更新 AI 處方參數
+    // 專利引擎：動態處方
     let newPrescription = { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 };
-    if (monthCycles >= 3) {
-      newPrescription = { level: 2, stretchSpeed: 1.0, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60 };
-    }
-    if (monthCycles >= 7) {
-      newPrescription = { level: 3, stretchSpeed: 1.3, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75 };
-    }
+    if (monthCycles >= 3) { newPrescription = { level: 2, stretchSpeed: 1.0, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60 }; }
+    if (monthCycles >= 7) { newPrescription = { level: 3, stretchSpeed: 1.3, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75 }; }
     gameState.current.prescription = newPrescription;
     setAiPrescriptionLevel(newPrescription.level);
-
   }, []);
 
   const handleShareCalendar = async () => {
@@ -275,7 +272,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (接收動態處方參數)
+  // Three.js 引擎與動畫 (完美 1/3 邊界限制)
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -306,7 +303,7 @@ export default function EyeComfortApp() {
     const particleSystem = new THREE.Points(particlesGeo, particlesMat); breatheGroup.add(particleSystem); breatheGroup.position.z = -20; scene.add(breatheGroup);
 
     const focusGroup = new THREE.Group();
-    const focusRing = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.8, 32, 1, 0, Math.PI * 1.7), new THREE.MeshBasicMaterial({ color: 0xff3366, side: THREE.DoubleSide, transparent: true }));
+    const focusRing = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.8, 32, 1, 0, Math.PI * 1.7), new MeshBasicMaterial({ color: 0xff3366, side: THREE.DoubleSide, transparent: true }));
     focusGroup.add(focusRing); scene.add(focusGroup);
 
     const amslerGroup = new THREE.Group();
@@ -327,7 +324,6 @@ export default function EyeComfortApp() {
         if (mod === 'stretch') { stretchGroup.visible = true; stretchOrb.position.set(0,0,-30); }
         if (mod === 'chaser') { chaserGroup.visible = true; breatheGroup.visible = true; chaserOrb.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -10); chaserOrb.scale.setScalar(1); chaserOrb.material.opacity = 1; }
         if (mod === 'breathe') { breatheGroup.visible = true; }
-        // 使用動態處方深度
         if (mod === 'focus') { focusGroup.visible = true; focusGroup.position.z = focusDepths[0]; focusRing.material.color.setHex(focusColors[0]); }
         if (mod === 'amsler') { amslerGroup.visible = true; }
         if (mod === 'astigmatism') { astigGroup.visible = true; }
@@ -377,7 +373,6 @@ export default function EyeComfortApp() {
       }
       
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
-        // 套用動態處方：stretchSpeed
         gameState.current.stretchAngle += (0.025 * gameState.current.prescription.stretchSpeed); 
         const speed = gameState.current.stretchAngle; 
         stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
@@ -395,7 +390,6 @@ export default function EyeComfortApp() {
       
       if (mod === 'breathe' || mod === 'chaser') { particleSystem.rotation.y += 0.0005; particleSystem.rotation.z += 0.0002; }
       if (mod === 'chaser' && gameState.current.chaserTimeLeft > 0) {
-        // 套用動態處方：chaserSpeed
         chaserOrb.position.z -= gameState.current.prescription.chaserSpeed;
         if (chaserOrb.position.z < -120) { 
           gameState.current.chaserScore++; playDingSound(); 
@@ -410,7 +404,6 @@ export default function EyeComfortApp() {
         const currentScale = 1.05 + breathCycle * 0.25; particleSystem.scale.setScalar(currentScale); particlesMat.color.setHSL(0.5 + breathCycle * 0.1, 0.8, 0.4 + breathCycle * 0.2);
       }
       if (mod === 'focus' && gameState.current.focusTimeLeft > 0) {
-        // 套用動態處方：maxDepth
         const dynamicFocusDepths = [-1, -15, -35, gameState.current.prescription.maxDepth];
         focusGroup.position.z += (dynamicFocusDepths[gameState.current.focusStep] - focusGroup.position.z) * 0.15;
       }
@@ -524,7 +517,6 @@ export default function EyeComfortApp() {
         if (state.isWaitingForRightEye || state.focusTimeLeft <= 0) return;
         state.focusTimeLeft--; state.focusHoldTime--;
         
-        // 套用動態處方：動態更新對焦循環速度
         const currentAiSpeed = state.prescription.focusSpeed;
         if (state.focusTimeLeft === 90) state.focusCycleSpeed = currentAiSpeed * 0.75;
         if (state.focusTimeLeft === 75) state.focusCycleSpeed = currentAiSpeed * 0.5;
@@ -566,7 +558,6 @@ export default function EyeComfortApp() {
     state.activeTimeAcc = 0;
     state.stretchAngle = 0;
     
-    // 初始化套用處方強度
     state.focusCycleSpeed = state.prescription.focusSpeed;
     state.focusHoldTime = state.prescription.focusSpeed;
 
@@ -616,7 +607,6 @@ export default function EyeComfortApp() {
             )}
           </p>
 
-          {/* 專利實作：動態 AI 處方展示 UI */}
           <div className="bg-[#162b2b] border border-[#00ffcc] rounded-lg p-3 mb-[30px] w-full max-w-[800px] text-center shadow-[0_0_10px_rgba(0,255,204,0.2)]">
             <p className="text-[#00ffcc] text-[14px] m-0 mb-1">🤖 邊緣運算自適應引擎啟動中</p>
             <p className="text-[#fffdd0] text-[16px] m-0 font-bold">為您生成的動態數位處方：強度 Level {aiPrescriptionLevel}</p>
@@ -838,7 +828,7 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 距離過近警告 */}
+          {/* 距離過近警告 (依然顯示 20公分，但底層實體觸發距離已拉寬至 18公分) */}
           {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">🛑</div>

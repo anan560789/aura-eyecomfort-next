@@ -15,8 +15,6 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const maxCycles = 3;
-const focusDepths = [-1, -15, -35, -60];
-const focusColors = [0xff3366, 0xff4d79, 0xff668c, 0xff809f];
 
 const focusTexts = [
   <div key="0"><span className="text-[#FF3366] font-bold">【極近對焦】</span><br/>用力看清缺口方向</div>,
@@ -24,6 +22,7 @@ const focusTexts = [
   <div key="2"><span className="text-[#ff668c] font-bold">【中遠距離】</span><br/>嘗試辨識缺口</div>,
   <div key="3"><span className="text-[#ff809f] font-bold">【深空極限】</span><br/>盡力即可，請放鬆不勉強</div>
 ];
+const focusColors = [0xff3366, 0xff4d79, 0xff668c, 0xff809f];
 
 const medicalPrinciples: Record<string, any> = {
   sop: { icon: "🚀", title: "45秒快速舒緩", color: "#FF6B6B", principle: "此模組結合了「睫狀肌放鬆」、「動態視覺刺激」與「淚膜穩定」的保健概念。<br><br>透過注視遠近變化的球體，輔助舒緩水晶體對焦壓力；最後的用力閉眼動作，可協助眼瞼板腺分泌油脂，幫助維持淚膜水分。" },
@@ -46,6 +45,9 @@ export default function EyeComfortApp() {
 
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION' | 'TOO_CLOSE'>('IDLE');
   
+  // 新增：AI 處方強度 UI 狀態
+  const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
   const trackingLoopRef = useRef<any>(null);
@@ -59,9 +61,9 @@ export default function EyeComfortApp() {
     module: 'DASHBOARD', cycle: 1, phase: 'LOOKING', sopTimeLeft: 10, stretchTimeLeft: 45, chaserTimeLeft: 60, chaserScore: 0,
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
-    activeTimeAcc: 0,
-    stretchAngle: 0,
-    aiStatus: 'IDLE' 
+    activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
+    // 專利實作：動態處方參數快取
+    prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 } 
   });
 
   const startTrackingLoop = useCallback(() => {
@@ -73,9 +75,7 @@ export default function EyeComfortApp() {
       if (videoRef.current.readyState >= 2) {
         const results = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
         
-        let yawRatio = 1;
-        let pitchRatio = 1;
-        let eyeDistance = 0;
+        let yawRatio = 1; let pitchRatio = 1; let eyeDistance = 0;
 
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
@@ -83,10 +83,8 @@ export default function EyeComfortApp() {
           const leftDist = Math.abs(noseX - leftEyeX); const rightDist = Math.abs(rightEyeX - noseX);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
           
-          const eyeNoseY = Math.abs(lm[1].y - lm[168].y); 
-          const noseMouthY = Math.abs(lm[13].y - lm[1].y); 
+          const eyeNoseY = Math.abs(lm[1].y - lm[168].y); const noseMouthY = Math.abs(lm[13].y - lm[1].y); 
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
-
           eyeDistance = Math.abs(leftEyeX - rightEyeX);
         }
 
@@ -96,58 +94,43 @@ export default function EyeComfortApp() {
         const isSopClosing = currentMod === 'sop' && currentPhase === 'CLOSING';
         const requiresCoveringEye = ['focus', 'amsler', 'astigmatism'].includes(currentMod);
 
-        let isLost = false;
-        let isTooClose = false;
+        let isLost = false; let isTooClose = false;
 
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
             if (!isSopClosing && !requiresCoveringEye) {
-                if (yawRatio > 1.6 || pitchRatio > 1.6) {
-                    isLost = true;
-                }
+                if (yawRatio > 1.6 || pitchRatio > 1.6) isLost = true;
             }
             if (!isLost && !isSopClosing && eyeDistance > 0.30) {
                 isTooClose = true;
             }
         }
 
-        if (isSopClosing) {
-            isLost = false;
-            isTooClose = false;
-        }
+        if (isSopClosing) { isLost = false; isTooClose = false; }
 
         if (isLost) {
           lostFrames++;
         } else {
           lostFrames = 0;
           if (isTooClose) {
-            if (gameState.current.aiStatus !== 'TOO_CLOSE') {
-              gameState.current.aiStatus = 'TOO_CLOSE';
-              setTrackingState('TOO_CLOSE');
-            }
+            if (gameState.current.aiStatus !== 'TOO_CLOSE') { gameState.current.aiStatus = 'TOO_CLOSE'; setTrackingState('TOO_CLOSE'); }
           } else {
-            if (gameState.current.aiStatus !== 'TRACKING') {
-              gameState.current.aiStatus = 'TRACKING';
-              setTrackingState('TRACKING');
-            }
+            if (gameState.current.aiStatus !== 'TRACKING') { gameState.current.aiStatus = 'TRACKING'; setTrackingState('TRACKING'); }
           }
         }
         
         if ((lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') || (lostFrames > 3 && gameState.current.aiStatus === 'TOO_CLOSE')) {
-          gameState.current.aiStatus = 'LOST';
-          setTrackingState('LOST');
+          gameState.current.aiStatus = 'LOST'; setTrackingState('LOST');
         }
       }
-      
       trackingLoopRef.current = setTimeout(() => { requestAnimationFrame(track); }, 100);
     };
     track();
   }, []);
 
   const initEyeTracking = useCallback(async () => {
-    gameState.current.aiStatus = 'INIT';
-    setTrackingState('INITIALIZING');
+    gameState.current.aiStatus = 'INIT'; setTrackingState('INITIALIZING');
     try {
       const { FaceLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
       const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
@@ -155,11 +138,9 @@ export default function EyeComfortApp() {
       if (!faceLandmarkerRef.current) {
         faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
-          outputFaceBlendshapes: false, 
-          runningMode: "VIDEO", numFaces: 1
+          outputFaceBlendshapes: false, runningMode: "VIDEO", numFaces: 1
         });
       }
-
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } });
       if (videoRef.current) {
         videoRef.current.srcObject = stream; videoRef.current.play();
@@ -167,8 +148,7 @@ export default function EyeComfortApp() {
       }
     } catch (err) {
       console.error("相機存取失敗", err);
-      gameState.current.aiStatus = 'NO_PERMISSION';
-      setTrackingState('NO_PERMISSION'); 
+      gameState.current.aiStatus = 'NO_PERMISSION'; setTrackingState('NO_PERMISSION'); 
     }
   }, [startTrackingLoop]);
 
@@ -178,8 +158,7 @@ export default function EyeComfortApp() {
       (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       videoRef.current.srcObject = null;
     }
-    gameState.current.aiStatus = 'IDLE';
-    setTrackingState('IDLE');
+    gameState.current.aiStatus = 'IDLE'; setTrackingState('IDLE');
   }, []);
 
   useEffect(() => { return () => { stopEyeTracking(); }; }, [stopEyeTracking]);
@@ -192,11 +171,9 @@ export default function EyeComfortApp() {
 
   useEffect(() => {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    audioRef.current.ctx = new AudioContext();
-    audioRef.current.bgm = new Audio(); audioRef.current.bgm.loop = true;
+    audioRef.current.ctx = new AudioContext(); audioRef.current.bgm = new Audio(); audioRef.current.bgm.loop = true;
     const enableAudio = () => { if (audioRef.current.ctx?.state === 'suspended') audioRef.current.ctx.resume(); };
-    window.addEventListener('click', enableAudio, { once: true });
-    window.addEventListener('touchstart', enableAudio, { once: true });
+    window.addEventListener('click', enableAudio, { once: true }); window.addEventListener('touchstart', enableAudio, { once: true });
     return () => { window.removeEventListener('click', enableAudio); window.removeEventListener('touchstart', enableAudio); };
   }, []);
 
@@ -206,8 +183,7 @@ export default function EyeComfortApp() {
     const osc = ctx.createOscillator(); const gain = ctx.createGain();
     osc.type = 'sine'; osc.frequency.setValueAtTime(600, ctx.currentTime);
     gain.gain.setValueAtTime(1, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.start(); osc.stop(ctx.currentTime + 1.5);
+    osc.connect(gain); gain.connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + 1.5);
   }, []);
 
   const playBGM = useCallback((src: string) => {
@@ -255,6 +231,18 @@ export default function EyeComfortApp() {
     const todayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(todayDate).padStart(2, '0')}`;
     const todayCycles = parseInt(localStorage.getItem(`rehab_cycles_${todayStr}`) || '0', 10);
     setCalendarData({ todayCycles, monthCycles, days, today: todayDate, year, month });
+
+    // 專利實作：依據月循環次數，動態自適應更新 AI 處方參數
+    let newPrescription = { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 };
+    if (monthCycles >= 3) {
+      newPrescription = { level: 2, stretchSpeed: 1.0, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60 };
+    }
+    if (monthCycles >= 7) {
+      newPrescription = { level: 3, stretchSpeed: 1.3, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75 };
+    }
+    gameState.current.prescription = newPrescription;
+    setAiPrescriptionLevel(newPrescription.level);
+
   }, []);
 
   const handleShareCalendar = async () => {
@@ -263,20 +251,12 @@ export default function EyeComfortApp() {
 
     const fallbackCopy = () => {
       try {
-        const textArea = document.createElement("textarea");
-        textArea.value = textToShare;
-        textArea.style.top = "0";
-        textArea.style.left = "0";
-        textArea.style.position = "fixed";
-        document.body.appendChild(textArea);
-        textArea.focus();
-        textArea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textArea);
+        const textArea = document.createElement("textarea"); textArea.value = textToShare;
+        textArea.style.top = "0"; textArea.style.left = "0"; textArea.style.position = "fixed";
+        document.body.appendChild(textArea); textArea.focus(); textArea.select();
+        document.execCommand("copy"); document.body.removeChild(textArea);
         alert("✅ 已成功複製專屬打卡紀錄！\n請直接貼上分享給您的好友或群組。");
-      } catch (err) {
-        alert("複製失敗，請手動截圖分享。");
-      }
+      } catch (err) { alert("複製失敗，請手動截圖分享。"); }
     };
 
     try {
@@ -284,16 +264,9 @@ export default function EyeComfortApp() {
         const res = await liff.shareTargetPicker([{ type: "text", text: textToShare }]);
         if (res) return; 
       }
-      
-      if (navigator.share) {
-        await navigator.share({ title: 'Aura EyeGym 視覺復健打卡', text: textToShare });
-        return;
-      }
-      
+      if (navigator.share) { await navigator.share({ title: 'Aura EyeGym 視覺復健打卡', text: textToShare }); return; }
       fallbackCopy();
-    } catch (e) {
-      fallbackCopy();
-    }
+    } catch (e) { fallbackCopy(); }
   };
 
   useEffect(() => {
@@ -302,7 +275,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 
+  // Three.js 引擎與動畫 (接收動態處方參數)
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -354,6 +327,7 @@ export default function EyeComfortApp() {
         if (mod === 'stretch') { stretchGroup.visible = true; stretchOrb.position.set(0,0,-30); }
         if (mod === 'chaser') { chaserGroup.visible = true; breatheGroup.visible = true; chaserOrb.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -10); chaserOrb.scale.setScalar(1); chaserOrb.material.opacity = 1; }
         if (mod === 'breathe') { breatheGroup.visible = true; }
+        // 使用動態處方深度
         if (mod === 'focus') { focusGroup.visible = true; focusGroup.position.z = focusDepths[0]; focusRing.material.color.setHex(focusColors[0]); }
         if (mod === 'amsler') { amslerGroup.visible = true; }
         if (mod === 'astigmatism') { astigGroup.visible = true; }
@@ -402,39 +376,27 @@ export default function EyeComfortApp() {
         }
       }
       
-      // ===== 核心修復：結合無垠 Z 軸與動態 1/3 邊界限制 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
-        gameState.current.stretchAngle += 0.025; 
+        // 套用動態處方：stretchSpeed
+        gameState.current.stretchAngle += (0.025 * gameState.current.prescription.stretchSpeed); 
         const speed = gameState.current.stretchAngle; 
         stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
         
-        // 恢復無垠深淺的 Z 軸穿梭軌跡 (-10 到 -50)
         const currentZ = -30 + Math.sin(speed * 0.5) * 20;
-        
-        // 根據目前的 Z 軸深度，動態計算該深度的螢幕可視邊界寬高
         const distToCamera = camera.position.z - currentZ;
         const vFovRad = (camera.fov * Math.PI) / 180;
         const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToCamera;
         const visibleWidth = visibleHeight * camera.aspect;
         
-        const edgeX = visibleWidth / 2;
-        const edgeY = visibleHeight / 2;
-        
-        // 光球直徑為 3.0 (半徑1.5)，允許 1/3 (即 1.0) 超出邊界
-        // 故中心點最大可達 edgeX - 0.5，精準控制！
-        const ampX = edgeX - 0.5; 
-        const ampY = Math.min(edgeY * 0.6, 12); 
-        
-        stretchOrb.position.set(
-          Math.sin(speed) * ampX, 
-          Math.sin(speed * 2) * ampY, 
-          currentZ
-        );
+        const edgeX = visibleWidth / 2; const edgeY = visibleHeight / 2;
+        const ampX = edgeX - 0.5; const ampY = Math.min(edgeY * 0.6, 12); 
+        stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, currentZ);
       }
       
       if (mod === 'breathe' || mod === 'chaser') { particleSystem.rotation.y += 0.0005; particleSystem.rotation.z += 0.0002; }
       if (mod === 'chaser' && gameState.current.chaserTimeLeft > 0) {
-        chaserOrb.position.z -= 0.6;
+        // 套用動態處方：chaserSpeed
+        chaserOrb.position.z -= gameState.current.prescription.chaserSpeed;
         if (chaserOrb.position.z < -120) { 
           gameState.current.chaserScore++; playDingSound(); 
           chaserOrb.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -10); chaserOrb.scale.setScalar(1); chaserOrb.material.opacity = 1;
@@ -448,7 +410,9 @@ export default function EyeComfortApp() {
         const currentScale = 1.05 + breathCycle * 0.25; particleSystem.scale.setScalar(currentScale); particlesMat.color.setHSL(0.5 + breathCycle * 0.1, 0.8, 0.4 + breathCycle * 0.2);
       }
       if (mod === 'focus' && gameState.current.focusTimeLeft > 0) {
-        focusGroup.position.z += (focusDepths[gameState.current.focusStep] - focusGroup.position.z) * 0.15;
+        // 套用動態處方：maxDepth
+        const dynamicFocusDepths = [-1, -15, -35, gameState.current.prescription.maxDepth];
+        focusGroup.position.z += (dynamicFocusDepths[gameState.current.focusStep] - focusGroup.position.z) * 0.15;
       }
       renderer.render(scene, camera);
     };
@@ -559,11 +523,15 @@ export default function EyeComfortApp() {
       } else if (state.module === 'focus') {
         if (state.isWaitingForRightEye || state.focusTimeLeft <= 0) return;
         state.focusTimeLeft--; state.focusHoldTime--;
-        if (state.focusTimeLeft === 90) state.focusCycleSpeed = 2;
-        if (state.focusTimeLeft === 75) state.focusCycleSpeed = 1.5;
-        if (state.focusTimeLeft === 60) { playDingSound(); state.focusCycleSpeed = 3; state.isWaitingForRightEye = true; }
-        if (state.focusTimeLeft === 30) state.focusCycleSpeed = 2;
-        if (state.focusTimeLeft === 15) state.focusCycleSpeed = 1.5;
+        
+        // 套用動態處方：動態更新對焦循環速度
+        const currentAiSpeed = state.prescription.focusSpeed;
+        if (state.focusTimeLeft === 90) state.focusCycleSpeed = currentAiSpeed * 0.75;
+        if (state.focusTimeLeft === 75) state.focusCycleSpeed = currentAiSpeed * 0.5;
+        if (state.focusTimeLeft === 60) { playDingSound(); state.focusCycleSpeed = currentAiSpeed; state.isWaitingForRightEye = true; }
+        if (state.focusTimeLeft === 30) state.focusCycleSpeed = currentAiSpeed * 0.75;
+        if (state.focusTimeLeft === 15) state.focusCycleSpeed = currentAiSpeed * 0.5;
+        
         if (state.focusHoldTime <= 0 && state.focusTimeLeft > 0) {
           state.focusStep += state.focusDirection;
           if (state.focusStep >= 3) { state.focusStep = 3; state.focusDirection = -1; }
@@ -598,6 +566,10 @@ export default function EyeComfortApp() {
     state.activeTimeAcc = 0;
     state.stretchAngle = 0;
     
+    // 初始化套用處方強度
+    state.focusCycleSpeed = state.prescription.focusSpeed;
+    state.focusHoldTime = state.prescription.focusSpeed;
+
     if (noSleepRef.current) noSleepRef.current.enable();
 
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(type)) {
@@ -610,7 +582,7 @@ export default function EyeComfortApp() {
     else if (type === 'stretch') { state.stretchTimeLeft = 45; playBGM('/game2.mp3'); }
     else if (type === 'chaser') { state.chaserTimeLeft = 60; state.chaserScore = 0; playBGM('/game3.mp3'); }
     else if (type === 'breathe') { state.breatheTimeLeft = 60; state.breathPhase = 'INHALE'; playBGM('/game4.mp3'); }
-    else if (type === 'focus') { state.focusTimeLeft = 120; state.focusStep = 0; state.focusDirection = 1; state.focusHoldTime = 3; state.focusCycleSpeed = 3; state.isWaitingForRightEye = false; playBGM('/game5.mp3'); }
+    else if (type === 'focus') { state.focusTimeLeft = 120; state.focusStep = 0; state.focusDirection = 1; state.isWaitingForRightEye = false; playBGM('/game5.mp3'); }
     else if (type === 'amsler' || type === 'astigmatism') { state.testPhase = 'LEFT_EYE_TEST'; state.testTimeLeft = 15; setTestResults({ leftEye: null, rightEye: null }); }
     
     engineRef.current?.start(type); updateUI();
@@ -638,11 +610,18 @@ export default function EyeComfortApp() {
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-start py-10 px-5 overflow-y-auto box-border">
           <h1 className="text-[#fffdd0] text-[32px] text-center mb-[15px] tracking-[1px]"><div className="text-[55px] mb-[10px]">👁️</div>Aura EyeGym</h1>
           <p className="text-[#00ffcc] text-[16px] mt-[-10px] mb-[15px]">數位視覺復健中心</p>
-          <p className={`text-[20px] text-center leading-[1.5] mb-[30px] break-keep ${lineProfile.uid !== '未登入' ? 'text-[#00ffcc]' : 'text-[#8b9bb4]'}`}>
+          <p className={`text-[20px] text-center leading-[1.5] mb-[20px] break-keep ${lineProfile.uid !== '未登入' ? 'text-[#00ffcc]' : 'text-[#8b9bb4]'}`}>
             {lineProfile.uid !== '未登入' ? `歡迎回來，${lineProfile.name}！請選擇您的專屬放鬆模組` : (
               <>請選擇您的專屬眼部放鬆與訓練模組<br /><button onClick={() => liff.login({ redirectUri: window.location.href })} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)]">🟢 使用 LINE 一鍵登入</button></>
             )}
           </p>
+
+          {/* 專利實作：動態 AI 處方展示 UI */}
+          <div className="bg-[#162b2b] border border-[#00ffcc] rounded-lg p-3 mb-[30px] w-full max-w-[800px] text-center shadow-[0_0_10px_rgba(0,255,204,0.2)]">
+            <p className="text-[#00ffcc] text-[14px] m-0 mb-1">🤖 邊緣運算自適應引擎啟動中</p>
+            <p className="text-[#fffdd0] text-[16px] m-0 font-bold">為您生成的動態數位處方：強度 Level {aiPrescriptionLevel}</p>
+          </div>
+
           <div className="w-full max-w-[800px] flex flex-col gap-5 mb-[40px]">
             <div onClick={() => setCurrentView('INFO_MODULES')} className="w-full bg-[#1a2233] border-2 border-[#E5B55E] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(229,181,94,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
               <h3 className="text-[#E5B55E] text-[22px] mb-2 font-bold">📖 數位復健模組與醫學學理說明</h3>
@@ -859,7 +838,7 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 距離過近警告 (依然顯示 20公分，但底層實體觸發距離已拉寬至 18公分) */}
+          {/* 距離過近警告 */}
           {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">🛑</div>

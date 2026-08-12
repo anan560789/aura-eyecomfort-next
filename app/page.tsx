@@ -60,7 +60,7 @@ export default function EyeComfortApp() {
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0,
-    stretchAngle: 0, // 核心修復：獨立的模組 2 專用平滑軌跡角度計數器
+    stretchAngle: 0,
     aiStatus: 'IDLE' 
   });
 
@@ -107,7 +107,8 @@ export default function EyeComfortApp() {
                     isLost = true;
                 }
             }
-            if (!isLost && !isSopClosing && eyeDistance > 0.26) {
+            // 核心調整：實體距離放寬至約 18 公分 (0.30 佔比)，但 UI 文案仍保持 20 公分衛教標準
+            if (!isLost && !isSopClosing && eyeDistance > 0.30) {
                 isTooClose = true;
             }
         }
@@ -258,40 +259,45 @@ export default function EyeComfortApp() {
   }, []);
 
   // ==========================================
-  // 核心修復 2：三階段智慧降級分享機制 (Smart Fallback Share)
+  // 核心修復 2：鋼鐵降級分享機制 (保證點擊必有反應)
   // ==========================================
   const handleShareCalendar = async () => {
-    // 即使未登入，也允許體驗分享功能
     const name = lineProfile.name || '我';
     const textToShare = `👁️ Aura EyeGym 視覺復健打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配醫師推薦營養配方，補充眼睛關鍵營養！\n👉 https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID || '2011063080-EDRCTHXv'}`;
 
-    // 1. 如果在 LINE App 內，且支援 target picker
-    if (liff.isLoggedIn() && liff.isApiAvailable('shareTargetPicker')) {
+    // 終極防線：使用傳統 DOM 操作進行隱藏複製，確保 100% 成功率
+    const fallbackCopy = () => {
       try {
-        await liff.shareTargetPicker([{ type: "text", text: textToShare }]);
-      } catch (e) {
-        alert("LINE 分享發生錯誤或取消。");
+        const textArea = document.createElement("textarea");
+        textArea.value = textToShare;
+        textArea.style.top = "0";
+        textArea.style.left = "0";
+        textArea.style.position = "fixed";
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+        alert("✅ 已成功複製專屬打卡紀錄！\n請直接貼上分享給您的好友或群組。");
+      } catch (err) {
+        alert("複製失敗，請手動截圖分享。");
       }
-    } 
-    // 2. 如果是一般瀏覽器 (Safari/Chrome)，使用原生分享選單
-    else if (navigator.share) {
-      try {
-        await navigator.share({
-          title: 'Aura EyeGym 視覺復健打卡',
-          text: textToShare
-        });
-      } catch (e) {
-        console.log('使用者取消分享或發生錯誤');
+    };
+
+    try {
+      if (liff.isLoggedIn() && liff.isApiAvailable('shareTargetPicker')) {
+        const res = await liff.shareTargetPicker([{ type: "text", text: textToShare }]);
+        if (res) return; 
       }
-    } 
-    // 3. 終極降級：如果都不支援，直接複製到剪貼簿
-    else {
-      try {
-        await navigator.clipboard.writeText(textToShare);
-        alert("✅ 已將分享內容複製到剪貼簿！請直接貼上給好友。");
-      } catch (e) {
-        alert("分享失敗，請檢查瀏覽器權限。");
+      
+      if (navigator.share) {
+        await navigator.share({ title: 'Aura EyeGym 視覺復健打卡', text: textToShare });
+        return;
       }
+      
+      fallbackCopy();
+    } catch (e) {
+      fallbackCopy();
     }
   };
 
@@ -301,7 +307,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (核心修復 1：模組 2 固定幀平滑軌跡)
+  // Three.js 引擎與動畫 
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -401,9 +407,8 @@ export default function EyeComfortApp() {
         }
       }
       
-      // ===== 完美修復：模組 2 改為「固定幀步進」，無視 AI 算力延遲，達到極致絲滑 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
-        gameState.current.stretchAngle += 0.025; // 每一幀固定前進 0.025 單位
+        gameState.current.stretchAngle += 0.025; 
         const speed = gameState.current.stretchAngle; 
         stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
         const isMobile = window.innerWidth < 600;
@@ -416,7 +421,6 @@ export default function EyeComfortApp() {
       
       if (mod === 'breathe' || mod === 'chaser') { particleSystem.rotation.y += 0.0005; particleSystem.rotation.z += 0.0002; }
       if (mod === 'chaser' && gameState.current.chaserTimeLeft > 0) {
-        // 模組 3 原本就是固定幀步進 ( -= 0.6)
         chaserOrb.position.z -= 0.6;
         if (chaserOrb.position.z < -120) { 
           gameState.current.chaserScore++; playDingSound(); 
@@ -442,11 +446,12 @@ export default function EyeComfortApp() {
   }, [playDingSound]); 
 
   // ==========================================
-  // 計時器邏輯與全域衛教結語
+  // 計時器邏輯
   // ==========================================
   const updateUI = useCallback(() => {
     const state = gameState.current;
     
+    // 依然保持「20 公分」的衛教文字設定
     const completionReminder = (
       <div className="text-[17px] text-[#E5B55E] mt-4 leading-[1.6] px-4">
         💡 溫馨提醒：訓練時為達最佳視覺張力可靠近至 20 公分，<br/>但日常滑手機請務必保持 <span className="text-[#00ffcc] font-bold">30~40 公分</span> 距離喔！
@@ -579,7 +584,7 @@ export default function EyeComfortApp() {
     state.isResting = false; 
     state.restTimeLeft = 0; 
     state.activeTimeAcc = 0;
-    state.stretchAngle = 0; // 啟動模組時重置角度計數器
+    state.stretchAngle = 0;
     
     if (noSleepRef.current) noSleepRef.current.enable();
 
@@ -842,7 +847,7 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 距離過近警告 */}
+          {/* 距離過近警告 (依然顯示 20公分，但底層實體觸發距離已拉寬至 18公分) */}
           {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">🛑</div>

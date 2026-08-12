@@ -5,6 +5,8 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
+  // 加上這行：告訴 Next.js 你的網站真實網域在哪裡
+  metadataBase: new URL('https://aura-eyecomfort-next.pages.dev'),
   title: 'Aura EyeGym | 數位視覺復健中心',
   description: '專屬您的數位眼科與視覺復健中心',
   openGraph: {
@@ -13,7 +15,8 @@ export const metadata: Metadata = {
     siteName: 'Aura EyeGym',
     images: [
       {
-        url: '/opengraph-image.jpg', // 這裡會自動去對應 public 資料夾內的圖片
+        // 改成這行：直接塞給它包含 https 的「絕對路徑」完整網址！
+        url: 'https://aura-eyecomfort-next.pages.dev/opengraph-image.jpg',
         width: 1200,
         height: 630,
       },

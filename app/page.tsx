@@ -45,7 +45,7 @@ export default function EyeComfortApp() {
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
 
   // ==========================================
-  // 3. AI 視線追蹤狀態與引擎
+  // 3. AI 視線追蹤狀態與引擎 (純臉部姿態，效能大解放版)
   // ==========================================
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION'>('IDLE');
   
@@ -75,38 +75,26 @@ export default function EyeComfortApp() {
       if (videoRef.current.readyState >= 2) {
         const results = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
         
-        let isGazeLost = false;
-        let isEyesClosed = false;
         let yawRatio = 1;
         let pitchRatio = 1;
 
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
+          // 左右偏移計算
           const noseX = lm[1].x; const leftEyeX = lm[33].x; const rightEyeX = lm[263].x;
           const leftDist = Math.abs(noseX - leftEyeX); const rightDist = Math.abs(rightEyeX - noseX);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
           
+          // 上下俯仰計算
           const eyeNoseY = Math.abs(lm[1].y - lm[168].y); 
           const noseMouthY = Math.abs(lm[13].y - lm[1].y); 
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
         }
 
-        if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
-          const shapes = results.faceBlendshapes[0].categories;
-          const lookShapes = shapes.filter((s: any) => 
-            ['eyeLookInLeft', 'eyeLookOutLeft', 'eyeLookUpLeft', 'eyeLookDownLeft',
-             'eyeLookInRight', 'eyeLookOutRight', 'eyeLookUpRight', 'eyeLookDownRight'].includes(s.categoryName)
-          );
-          const blinkShapes = shapes.filter((s: any) => ['eyeBlinkLeft', 'eyeBlinkRight'].includes(s.categoryName));
-
-          if (lookShapes.some((s: any) => s.score > 0.60)) isGazeLost = true;
-          if (blinkShapes.some((s: any) => s.score > 0.55)) isEyesClosed = true;
-        }
-
         const isSopClosing = gameState.current.module === 'sop' && gameState.current.phase === 'CLOSING';
 
-        // 閾值收緊到 1.6：上下抬頭或左右轉頭稍微明顯就會被抓到
-        if (!isSopClosing && (results.faceLandmarks.length === 0 || yawRatio > 1.6 || pitchRatio > 1.6 || isGazeLost || isEyesClosed)) {
+        // 移除了 Blendshapes 的眼球追蹤，僅保留臉部姿態。閾值設為 1.6：沒有看正中間就警示
+        if (!isSopClosing && (results.faceLandmarks.length === 0 || yawRatio > 1.6 || pitchRatio > 1.6)) {
           lostFrames++;
         } else {
           lostFrames = 0;
@@ -122,6 +110,7 @@ export default function EyeComfortApp() {
         }
       }
       
+      // 以 100ms 為週期，確保主執行緒不會卡頓
       trackingLoopRef.current = setTimeout(() => { requestAnimationFrame(track); }, 100);
     };
     track();
@@ -137,7 +126,7 @@ export default function EyeComfortApp() {
       if (!faceLandmarkerRef.current) {
         faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
-          outputFaceBlendshapes: true, 
+          outputFaceBlendshapes: false, // 核心優化：關閉耗能的眼球特徵運算，確保 3D 絲滑
           runningMode: "VIDEO", numFaces: 1
         });
       }
@@ -255,7 +244,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (完美還原 Mod2 原始 3D 拉伸)
+  // Three.js 引擎與動畫 (完美還原絲滑軌跡版)
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -336,8 +325,8 @@ export default function EyeComfortApp() {
         renderer.render(scene, camera); return; 
       }
 
-      // 解除過度嚴格的防掉幀機制，將上限放寬至 100ms，保留時間軸的滑順補償
-      const delta = Math.min(now - lastRenderTime, 100);
+      // 優化動畫順暢度：封頂延遲縮減到 40ms，即使 AI 運算稍微吃緊，3D 移動也不會跳格
+      const delta = Math.min(now - lastRenderTime, 40);
       lastRenderTime = now;
       gameState.current.activeTimeAcc += delta;
       
@@ -356,12 +345,11 @@ export default function EyeComfortApp() {
         }
       }
       
-      // ===== 核心優化：100% 還原最完美的第一版 Mod 2 Z軸拉伸邏輯 =====
+      // ===== 核心還原：最原始、完美的 3D 軌跡，沒有任何卡頓的 Z 軸伸展 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
         const speed = timeDelta; 
         stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
         const isMobile = window.innerWidth < 600;
-        // 原始完美的 Z 軸前後無垠穿梭 (-10 到 -50) 與固定邊界
         stretchOrb.position.set(
           Math.sin(speed) * (isMobile ? 8.5 : 18), 
           Math.sin(speed * 2) * (isMobile ? 12 : 8), 
@@ -513,7 +501,7 @@ export default function EyeComfortApp() {
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
   // ==========================================
-  // 視圖切換與按鈕處理 (修復模組切換時的狀態洩漏)
+  // 視圖切換與按鈕處理
   // ==========================================
   const startTraining = (type: string) => {
     if (audioRef.current.ctx?.state === 'suspended') { audioRef.current.ctx.resume(); }
@@ -521,7 +509,6 @@ export default function EyeComfortApp() {
     setActiveModule(type); setCurrentView('TRAINING');
     const state = gameState.current;
     
-    // 核心修復：不管前一個模組狀態為何，每次啟動絕對重置為 LOOKING 階段！
     state.module = type; 
     state.phase = 'LOOKING'; 
     state.isResting = false; 
@@ -602,7 +589,7 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 */}
+      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 (折疊以省版面) */}
       {currentView === 'INFO_NUTRIENT' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -793,9 +780,9 @@ export default function EyeComfortApp() {
           {trackingState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">⚠️</div>
-              <h2 className="text-[#ff4d4d] text-[28px] font-bold mb-4 tracking-widest">失去視線追蹤</h2>
+              <h2 className="text-[#ff4d4d] text-[28px] font-bold mb-4 tracking-widest">頭部偏離或失去視線</h2>
               <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                訓練與時間已暫停。<br/>請直視螢幕鏡頭，並確認<strong className="text-[#E5B55E]">鏡片無嚴重反光</strong>。
+                訓練與時間已暫停。<br/>請確保<strong className="text-[#E5B55E]">臉部正對螢幕</strong>。
               </p>
             </div>
           )}

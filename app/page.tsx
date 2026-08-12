@@ -45,7 +45,7 @@ export default function EyeComfortApp() {
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
 
   // ==========================================
-  // 3. AI 視線追蹤狀態與引擎 (純臉部姿態，效能大解放版)
+  // 3. AI 視線追蹤狀態與引擎 
   // ==========================================
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION'>('IDLE');
   
@@ -80,21 +80,40 @@ export default function EyeComfortApp() {
 
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
-          // 左右偏移計算
           const noseX = lm[1].x; const leftEyeX = lm[33].x; const rightEyeX = lm[263].x;
           const leftDist = Math.abs(noseX - leftEyeX); const rightDist = Math.abs(rightEyeX - noseX);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
           
-          // 上下俯仰計算
           const eyeNoseY = Math.abs(lm[1].y - lm[168].y); 
           const noseMouthY = Math.abs(lm[13].y - lm[1].y); 
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
         }
 
-        const isSopClosing = gameState.current.module === 'sop' && gameState.current.phase === 'CLOSING';
+        const currentMod = gameState.current.module;
+        const currentPhase = gameState.current.phase;
+        
+        const isSopClosing = currentMod === 'sop' && currentPhase === 'CLOSING';
+        // 核心修復：為需要遮眼的模組 (5, 6, 7) 提供追蹤豁免權
+        const requiresCoveringEye = ['focus', 'amsler', 'astigmatism'].includes(currentMod);
 
-        // 移除了 Blendshapes 的眼球追蹤，僅保留臉部姿態。閾值設為 1.6：沒有看正中間就警示
-        if (!isSopClosing && (results.faceLandmarks.length === 0 || yawRatio > 1.6 || pitchRatio > 1.6)) {
+        let isLost = false;
+
+        // 如果連臉都完全找不到，那絕對是 Lost
+        if (results.faceLandmarks.length === 0) {
+            isLost = true;
+        } else {
+            // 如果找到了臉，但不是在閉眼或遮眼階段，才去嚴格檢查角度
+            if (!isSopClosing && !requiresCoveringEye) {
+                if (yawRatio > 1.6 || pitchRatio > 1.6) {
+                    isLost = true;
+                }
+            }
+        }
+
+        // 如果在閉眼或遮眼階段，只要臉還在畫面上（即便被遮住一半），就視為 TRACKING
+        if (isSopClosing) isLost = false;
+
+        if (isLost) {
           lostFrames++;
         } else {
           lostFrames = 0;
@@ -110,7 +129,6 @@ export default function EyeComfortApp() {
         }
       }
       
-      // 以 100ms 為週期，確保主執行緒不會卡頓
       trackingLoopRef.current = setTimeout(() => { requestAnimationFrame(track); }, 100);
     };
     track();
@@ -126,7 +144,7 @@ export default function EyeComfortApp() {
       if (!faceLandmarkerRef.current) {
         faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
-          outputFaceBlendshapes: false, // 核心優化：關閉耗能的眼球特徵運算，確保 3D 絲滑
+          outputFaceBlendshapes: false, 
           runningMode: "VIDEO", numFaces: 1
         });
       }
@@ -244,7 +262,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (完美還原絲滑軌跡版)
+  // Three.js 引擎與動畫 
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -325,7 +343,6 @@ export default function EyeComfortApp() {
         renderer.render(scene, camera); return; 
       }
 
-      // 優化動畫順暢度：封頂延遲縮減到 40ms，即使 AI 運算稍微吃緊，3D 移動也不會跳格
       const delta = Math.min(now - lastRenderTime, 40);
       lastRenderTime = now;
       gameState.current.activeTimeAcc += delta;
@@ -345,7 +362,6 @@ export default function EyeComfortApp() {
         }
       }
       
-      // ===== 核心還原：最原始、完美的 3D 軌跡，沒有任何卡頓的 Z 軸伸展 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
         const speed = timeDelta; 
         stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
@@ -517,7 +533,8 @@ export default function EyeComfortApp() {
     
     if (noSleepRef.current) noSleepRef.current.enable();
 
-    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
+    // 擴大 AI 啟動範圍：加入 amsler 與 astigmatism
+    if (['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(type)) {
       gameState.current.aiStatus = 'INIT'; 
       setTrackingState('INITIALIZING');
       initEyeTracking(); 
@@ -534,7 +551,7 @@ export default function EyeComfortApp() {
   };
 
   const returnToDashboard = () => {
-    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module)) { stopBGM(); stopEyeTracking(); }
+    if (['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(gameState.current.module)) { stopBGM(); stopEyeTracking(); }
     gameState.current.module = 'DASHBOARD'; 
     engineRef.current?.stop();
     if (noSleepRef.current) noSleepRef.current.disable();
@@ -589,7 +606,7 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 (折疊以省版面) */}
+      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 */}
       {currentView === 'INFO_NUTRIENT' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -759,7 +776,7 @@ export default function EyeComfortApp() {
           <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
           
           {/* AI 畫中畫校正窗 (PIP) */}
-          {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
+          {['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(gameState.current.module) && (
             <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none">
               <video ref={videoRef} className="w-full h-full object-cover transform scale-x-[-1]" playsInline muted autoPlay />
             </div>

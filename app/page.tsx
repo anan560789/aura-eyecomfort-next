@@ -81,20 +81,37 @@ export default function EyeComfortApp() {
       if (videoRef.current.readyState >= 2) {
         const results = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-          lostFrames = 0;
-          if (!isTrackingRef.current) {
-            isTrackingRef.current = true;
-            setTrackingState('TRACKING');
-            trackingStateRef.current = 'TRACKING';
+          // 專利級：臉部偏航角 (Yaw) 轉頭防呆演算法
+          const lm = results.faceLandmarks[0];
+          const noseX = lm[1].x; 
+          const leftEyeX = lm[33].x; 
+          const rightEyeX = lm[263].x;
+          
+          const leftDist = Math.abs(noseX - leftEyeX);
+          const rightDist = Math.abs(rightEyeX - noseX);
+          
+          // 計算雙眼到鼻子的比例。如果頭直視前方，比例約為 1。如果轉頭，比例會嚴重失衡。
+          const yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
+          
+          if (yawRatio > 2.5) { // 比例大於 2.5 代表頭已經明顯轉開
+            lostFrames++;
+          } else {
+            lostFrames = 0;
+            if (!isTrackingRef.current) {
+              isTrackingRef.current = true;
+              trackingStateRef.current = 'TRACKING';
+              setTrackingState('TRACKING');
+            }
           }
         } else {
           lostFrames++;
-          // 降低容錯率：大約 3 frames (0.3秒) 抓不到立刻紅屏防呆
-          if (lostFrames > 3 && isTrackingRef.current) {
-            isTrackingRef.current = false;
-            setTrackingState('LOST');
-            trackingStateRef.current = 'LOST';
-          }
+        }
+        
+        // 降低容錯率：大約 3 frames (0.3秒) 抓不到立刻紅屏防呆
+        if (lostFrames > 3 && isTrackingRef.current) {
+          isTrackingRef.current = false;
+          trackingStateRef.current = 'LOST';
+          setTrackingState('LOST');
         }
       }
       trackingLoopRef.current = setTimeout(track, 100); 
@@ -111,26 +128,19 @@ export default function EyeComfortApp() {
       
       if (!faceLandmarkerRef.current) {
         faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            delegate: "GPU"
-          },
-          outputFaceBlendshapes: false,
-          runningMode: "VIDEO",
-          numFaces: 1
+          baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
+          outputFaceBlendshapes: false, runningMode: "VIDEO", numFaces: 1
         });
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } });
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        videoRef.current.srcObject = stream; videoRef.current.play();
         videoRef.current.onloadeddata = () => { startTrackingLoop(); };
       }
     } catch (err) {
       console.error("相機存取失敗", err);
-      setTrackingState('NO_PERMISSION');
-      isTrackingRef.current = true; 
+      setTrackingState('NO_PERMISSION'); isTrackingRef.current = true; trackingStateRef.current = 'NO_PERMISSION';
     }
   }, [startTrackingLoop]);
 
@@ -141,6 +151,7 @@ export default function EyeComfortApp() {
       videoRef.current.srcObject = null;
     }
     isTrackingRef.current = false;
+    trackingStateRef.current = 'IDLE';
     setTrackingState('IDLE');
   }, []);
 
@@ -235,7 +246,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (完美滑順軌跡版)
+  // Three.js 引擎與動畫 (完美滑順軌跡版 + Mod 2 強度升級)
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -251,7 +262,6 @@ export default function EyeComfortApp() {
     focusTarget.add(new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 16), coreMat)); sopGroup.add(focusTarget); scene.add(sopGroup);
 
     const stretchGroup = new THREE.Group();
-    // 光球半徑維持 1.5
     const stretchOrb = new THREE.Mesh(new THREE.SphereGeometry(1.5, 32, 32), new THREE.MeshBasicMaterial({ color: 0xff9900 }));
     stretchOrb.add(new THREE.PointLight(0xffaa00, 2.5, 60)); stretchGroup.add(stretchOrb); scene.add(stretchGroup);
 
@@ -338,25 +348,31 @@ export default function EyeComfortApp() {
         }
       }
       
-      // ===== 核心優化：模組 2 精準 1/3 邊界軌跡 =====
+      // ===== 核心優化：模組 2 劇烈 3D 景深與縮放伸展 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
-        const speed = timeDelta * 0.8; // 稍微放慢一點，讓移動更平滑優雅
+        const speed = timeDelta * 0.8; 
         
-        // 數學演算：利用 FOV 動態計算在 Z=-30 時的螢幕真實寬高
-        const distToBall = 35; // camera Z(5) - orb Z(-30)
+        // 導入動態 Z 軸：讓球在 -15 到 -45 之間劇烈穿梭
+        const zPos = -30 + Math.sin(speed * 1.5) * 15;
+        
+        // 數學演算：利用 FOV 動態計算在目前 zPos 時的螢幕真實寬高
+        const distToBall = camera.position.z - zPos; 
         const vFovRad = (camera.fov * Math.PI) / 180;
-        const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToBall; // 約 53.7
+        const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToBall;
         const visibleWidth = visibleHeight * camera.aspect;
         
         const edgeX = visibleWidth / 2;
         const edgeY = visibleHeight / 2;
         
-        // 球半徑 1.5。允許最多 1/3 的球 (距離1.0) 超出邊界，球心最高可達 edgeX - 0.5
+        // 球半徑 1.5。允許最多 1/3 的球 (距離1.0) 超出邊界
         const ampX = edgeX - 0.5;
-        // Y 軸稍微保守一點，因為上下有黑色的 UI 文字框會擋住
-        const ampY = Math.min(edgeY * 0.6, 12); 
+        const ampY = Math.min(edgeY * 0.6, distToBall * 0.3); 
         
-        stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, -30);
+        stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, zPos);
+        
+        // 加入高強度的體積脈衝變化 (Pulse)：大小從 0.3 倍暴增到 2.7 倍！
+        const scaleBase = 1.5 + Math.sin(speed * 2.5) * 1.2;
+        stretchOrb.scale.setScalar(Math.max(0.3, scaleBase));
       }
       
       if (mod === 'breathe' || mod === 'chaser') { particleSystem.rotation.y += 0.0005; particleSystem.rotation.z += 0.0002; }
@@ -505,13 +521,10 @@ export default function EyeComfortApp() {
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
   // ==========================================
-  // 視圖切換與按鈕處理
+  // 視圖切換與按鈕處理 (修復同步問題)
   // ==========================================
   const startTraining = (type: string) => {
-    // 點擊瞬間喚醒 AudioContext，修復 iOS 靜音問題
-    if (audioRef.current.ctx?.state === 'suspended') {
-      audioRef.current.ctx.resume();
-    }
+    if (audioRef.current.ctx?.state === 'suspended') { audioRef.current.ctx.resume(); }
 
     setActiveModule(type); setCurrentView('TRAINING');
     const state = gameState.current;
@@ -519,7 +532,12 @@ export default function EyeComfortApp() {
     
     if (noSleepRef.current) noSleepRef.current.enable();
 
-    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) { initEyeTracking(); }
+    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
+      // 在點擊的「第 0 毫秒」就強制宣告 AI 正在載入，避免計時器偷跑！
+      trackingStateRef.current = 'INITIALIZING';
+      setTrackingState('INITIALIZING');
+      initEyeTracking(); 
+    }
     
     if (type === 'sop') { state.cycle = 1; state.phase = 'LOOKING'; state.sopTimeLeft = 10; playBGM('/game1.mp3'); }
     else if (type === 'stretch') { state.stretchTimeLeft = 45; playBGM('/game2.mp3'); }
@@ -576,7 +594,7 @@ export default function EyeComfortApp() {
               <ModuleCard title="🌌 星雲散焦與神經放鬆" desc="【深度冥想】釋放隧道視覺，同步 3D 粒子星雲進行共振呼吸。" color="#FFD93D" onClick={() => showModuleIntro('breathe')} />
               <ModuleCard title="🎯 Z 軸遠近對焦飛梭" desc="高強度睫狀肌重訓！利用極端遠近切換，恢復眼球對焦彈性。" color="#FF3366" onClick={() => showModuleIntro('focus')} />
               <ModuleCard title="🔍 互動式黃斑部評估" desc="專利級數位化阿姆斯勒方格表，包含左右眼自適應風險運算。" color="#9D4EDD" onClick={() => startTraining('amsler')} />
-              <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛在散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => startTraining('astigmatism')} />
+              <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛 ডিভাইস 散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => startTraining('astigmatism')} />
             </div>
 
             <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02] mt-2">

@@ -15,7 +15,7 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 const maxCycles = 3;
-const focusDepths = [-1, -15, -35, -60]; // 補回：全域預設景深陣列
+const focusDepths = [-1, -15, -35, -60];
 const focusColors = [0xff3366, 0xff4d79, 0xff668c, 0xff809f];
 
 const focusTexts = [
@@ -76,16 +76,24 @@ export default function EyeComfortApp() {
       if (videoRef.current.readyState >= 2) {
         const results = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
         
-        let yawRatio = 1; let pitchRatio = 1; let eyeDistance = 0;
+        let yawRatio = 1; 
+        let pitchRatio = 1; 
+        let eyeDistance = 0;
 
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
-          const noseX = lm[1].x; const leftEyeX = lm[33].x; const rightEyeX = lm[263].x;
-          const leftDist = Math.abs(noseX - leftEyeX); const rightDist = Math.abs(rightEyeX - noseX);
+          const noseX = lm[1].x; 
+          const leftEyeX = lm[33].x; 
+          const rightEyeX = lm[263].x;
+          
+          const leftDist = Math.abs(noseX - leftEyeX); 
+          const rightDist = Math.abs(rightEyeX - noseX);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
           
-          const eyeNoseY = Math.abs(lm[1].y - lm[168].y); const noseMouthY = Math.abs(lm[13].y - lm[1].y); 
+          const eyeNoseY = Math.abs(lm[1].y - lm[168].y); 
+          const noseMouthY = Math.abs(lm[13].y - lm[1].y); 
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
+          
           eyeDistance = Math.abs(leftEyeX - rightEyeX);
         }
 
@@ -95,7 +103,8 @@ export default function EyeComfortApp() {
         const isSopClosing = currentMod === 'sop' && currentPhase === 'CLOSING';
         const requiresCoveringEye = ['focus', 'amsler', 'astigmatism'].includes(currentMod);
 
-        let isLost = false; let isTooClose = false;
+        let isLost = false; 
+        let isTooClose = false;
 
         if (results.faceLandmarks.length === 0) {
             isLost = true;
@@ -109,21 +118,31 @@ export default function EyeComfortApp() {
             }
         }
 
-        if (isSopClosing) { isLost = false; isTooClose = false; }
+        if (isSopClosing) { 
+          isLost = false; 
+          isTooClose = false; 
+        }
 
         if (isLost) {
           lostFrames++;
         } else {
           lostFrames = 0;
           if (isTooClose) {
-            if (gameState.current.aiStatus !== 'TOO_CLOSE') { gameState.current.aiStatus = 'TOO_CLOSE'; setTrackingState('TOO_CLOSE'); }
+            if (gameState.current.aiStatus !== 'TOO_CLOSE') { 
+              gameState.current.aiStatus = 'TOO_CLOSE'; 
+              setTrackingState('TOO_CLOSE'); 
+            }
           } else {
-            if (gameState.current.aiStatus !== 'TRACKING') { gameState.current.aiStatus = 'TRACKING'; setTrackingState('TRACKING'); }
+            if (gameState.current.aiStatus !== 'TRACKING') { 
+              gameState.current.aiStatus = 'TRACKING'; 
+              setTrackingState('TRACKING'); 
+            }
           }
         }
         
         if ((lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') || (lostFrames > 3 && gameState.current.aiStatus === 'TOO_CLOSE')) {
-          gameState.current.aiStatus = 'LOST'; setTrackingState('LOST');
+          gameState.current.aiStatus = 'LOST'; 
+          setTrackingState('LOST');
         }
       }
       trackingLoopRef.current = setTimeout(() => { requestAnimationFrame(track); }, 100);
@@ -132,7 +151,8 @@ export default function EyeComfortApp() {
   }, []);
 
   const initEyeTracking = useCallback(async () => {
-    gameState.current.aiStatus = 'INIT'; setTrackingState('INITIALIZING');
+    gameState.current.aiStatus = 'INIT'; 
+    setTrackingState('INITIALIZING');
     try {
       const { FaceLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
       const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
@@ -140,17 +160,21 @@ export default function EyeComfortApp() {
       if (!faceLandmarkerRef.current) {
         faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
-          outputFaceBlendshapes: false, runningMode: "VIDEO", numFaces: 1
+          outputFaceBlendshapes: false, 
+          runningMode: "VIDEO", 
+          numFaces: 1
         });
       }
       const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } });
       if (videoRef.current) {
-        videoRef.current.srcObject = stream; videoRef.current.play();
+        videoRef.current.srcObject = stream; 
+        videoRef.current.play();
         videoRef.current.onloadeddata = () => { startTrackingLoop(); };
       }
     } catch (err) {
       console.error("相機存取失敗", err);
-      gameState.current.aiStatus = 'NO_PERMISSION'; setTrackingState('NO_PERMISSION'); 
+      gameState.current.aiStatus = 'NO_PERMISSION'; 
+      setTrackingState('NO_PERMISSION'); 
     }
   }, [startTrackingLoop]);
 
@@ -160,7 +184,8 @@ export default function EyeComfortApp() {
       (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       videoRef.current.srcObject = null;
     }
-    gameState.current.aiStatus = 'IDLE'; setTrackingState('IDLE');
+    gameState.current.aiStatus = 'IDLE'; 
+    setTrackingState('IDLE');
   }, []);
 
   useEffect(() => { return () => { stopEyeTracking(); }; }, [stopEyeTracking]);
@@ -173,62 +198,122 @@ export default function EyeComfortApp() {
 
   useEffect(() => {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
-    audioRef.current.ctx = new AudioContext(); audioRef.current.bgm = new Audio(); audioRef.current.bgm.loop = true;
+    audioRef.current.ctx = new AudioContext(); 
+    audioRef.current.bgm = new Audio(); 
+    audioRef.current.bgm.loop = true;
     const enableAudio = () => { if (audioRef.current.ctx?.state === 'suspended') audioRef.current.ctx.resume(); };
-    window.addEventListener('click', enableAudio, { once: true }); window.addEventListener('touchstart', enableAudio, { once: true });
+    window.addEventListener('click', enableAudio, { once: true }); 
+    window.addEventListener('touchstart', enableAudio, { once: true });
     return () => { window.removeEventListener('click', enableAudio); window.removeEventListener('touchstart', enableAudio); };
   }, []);
 
   const playDingSound = useCallback(() => {
     const ctx = audioRef.current.ctx; if (!ctx) return;
     if (ctx.state === 'suspended') ctx.resume();
-    const osc = ctx.createOscillator(); const gain = ctx.createGain();
-    osc.type = 'sine'; osc.frequency.setValueAtTime(600, ctx.currentTime);
-    gain.gain.setValueAtTime(1, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
-    osc.connect(gain); gain.connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + 1.5);
+    const osc = ctx.createOscillator(); 
+    const gain = ctx.createGain();
+    osc.type = 'sine'; 
+    osc.frequency.setValueAtTime(600, ctx.currentTime);
+    gain.gain.setValueAtTime(1, ctx.currentTime); 
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
+    osc.connect(gain); 
+    gain.connect(ctx.destination); 
+    osc.start(); 
+    osc.stop(ctx.currentTime + 1.5);
   }, []);
 
   const playBGM = useCallback((src: string) => {
     const { bgm } = audioRef.current; if (!bgm) return;
-    clearInterval(audioRef.current.fadeInt); clearTimeout(audioRef.current.dipTimeout);
-    bgm.src = src; bgm.volume = 0;
+    clearInterval(audioRef.current.fadeInt); 
+    clearTimeout(audioRef.current.dipTimeout);
+    bgm.src = src; 
+    bgm.volume = 0;
     const playPromise = bgm.play();
-    if (playPromise !== undefined) playPromise.then(() => { let vol = 0; audioRef.current.fadeInt = setInterval(() => { if (vol < 0.6) { vol += 0.05; bgm.volume = Math.min(vol, 0.6); } else clearInterval(audioRef.current.fadeInt); }, 100); }).catch(() => {});
+    if (playPromise !== undefined) {
+      playPromise.then(() => { 
+        let vol = 0; 
+        audioRef.current.fadeInt = setInterval(() => { 
+          if (vol < 0.6) { vol += 0.05; bgm.volume = Math.min(vol, 0.6); } 
+          else clearInterval(audioRef.current.fadeInt); 
+        }, 100); 
+      }).catch(() => {});
+    }
   }, []);
 
   const stopBGM = useCallback(() => {
     const { bgm } = audioRef.current; if (!bgm) return;
-    clearInterval(audioRef.current.fadeInt); clearTimeout(audioRef.current.dipTimeout);
-    let vol = bgm.volume; audioRef.current.fadeInt = setInterval(() => { if (vol > 0.05) { vol -= 0.1; bgm.volume = Math.max(vol, 0); } else { clearInterval(audioRef.current.fadeInt); bgm.pause(); bgm.currentTime = 0; } }, 100);
+    clearInterval(audioRef.current.fadeInt); 
+    clearTimeout(audioRef.current.dipTimeout);
+    let vol = bgm.volume; 
+    audioRef.current.fadeInt = setInterval(() => { 
+      if (vol > 0.05) { vol -= 0.1; bgm.volume = Math.max(vol, 0); } 
+      else { clearInterval(audioRef.current.fadeInt); bgm.pause(); bgm.currentTime = 0; } 
+    }, 100);
   }, []);
 
   const dipBGM = useCallback(() => {
     const { bgm } = audioRef.current; if (!bgm) return;
-    clearInterval(audioRef.current.fadeInt); clearTimeout(audioRef.current.dipTimeout);
-    let vol = bgm.volume; audioRef.current.fadeInt = setInterval(() => { if (vol > 0.15) { vol -= 0.05; bgm.volume = Math.max(vol, 0.15); } else { clearInterval(audioRef.current.fadeInt); audioRef.current.dipTimeout = setTimeout(() => { audioRef.current.fadeInt = setInterval(() => { if (vol < 0.6) { vol += 0.05; bgm.volume = Math.min(vol, 0.6); } else clearInterval(audioRef.current.fadeInt); }, 100); }, 3500); } }, 100);
+    clearInterval(audioRef.current.fadeInt); 
+    clearTimeout(audioRef.current.dipTimeout);
+    let vol = bgm.volume; 
+    audioRef.current.fadeInt = setInterval(() => { 
+      if (vol > 0.15) { vol -= 0.05; bgm.volume = Math.max(vol, 0.15); } 
+      else { 
+        clearInterval(audioRef.current.fadeInt); 
+        audioRef.current.dipTimeout = setTimeout(() => { 
+          audioRef.current.fadeInt = setInterval(() => { 
+            if (vol < 0.6) { vol += 0.05; bgm.volume = Math.min(vol, 0.6); } 
+            else clearInterval(audioRef.current.fadeInt); 
+          }, 100); 
+        }, 3500); 
+      } 
+    }, 100);
   }, []);
 
-  const logTraining = async (moduleName: string, durationSec: number) => { if (!lineProfile.uid || lineProfile.uid === '未登入') return; try { await supabase.from('training_logs').insert([{ line_uid: lineProfile.uid, module_name: moduleName, duration: durationSec }]); } catch (err) {} };
-  const getTodayString = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const logTraining = async (moduleName: string, durationSec: number) => { 
+    if (!lineProfile.uid || lineProfile.uid === '未登入') return; 
+    try { 
+      await supabase.from('training_logs').insert([{ line_uid: lineProfile.uid, module_name: moduleName, duration: durationSec }]); 
+    } catch (err) {} 
+  };
+  
+  const getTodayString = () => { 
+    const d = new Date(); 
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; 
+  };
 
   const recordModuleCompletion = (type: string) => {
     if (!['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(type)) return;
-    const today = getTodayString(); const modulesKey = `rehab_modules_${today}`; const cyclesKey = `rehab_cycles_${today}`;
-    let modulesDone = JSON.parse(localStorage.getItem(modulesKey) || '[]'); let cycles = parseInt(localStorage.getItem(cyclesKey) || '0', 10);
+    const today = getTodayString(); 
+    const modulesKey = `rehab_modules_${today}`; 
+    const cyclesKey = `rehab_cycles_${today}`;
+    let modulesDone = JSON.parse(localStorage.getItem(modulesKey) || '[]'); 
+    let cycles = parseInt(localStorage.getItem(cyclesKey) || '0', 10);
     if (!modulesDone.includes(type)) modulesDone.push(type);
-    if (modulesDone.length >= 4) { cycles++; localStorage.setItem(cyclesKey, cycles.toString()); localStorage.setItem(modulesKey, JSON.stringify([])); } 
-    else { localStorage.setItem(modulesKey, JSON.stringify(modulesDone)); }
+    if (modulesDone.length >= 4) { 
+      cycles++; 
+      localStorage.setItem(cyclesKey, cycles.toString()); 
+      localStorage.setItem(modulesKey, JSON.stringify([])); 
+    } else { 
+      localStorage.setItem(modulesKey, JSON.stringify(modulesDone)); 
+    }
     loadCalendarData();
   };
 
   const loadCalendarData = useCallback(() => {
-    const d = new Date(); const year = d.getFullYear(); const month = d.getMonth(); const todayDate = d.getDate();
-    const firstDay = new Date(year, month, 1).getDay(); const daysInMonth = new Date(year, month + 1, 0).getDate();
-    let monthCycles = 0; const days = Array(firstDay).fill(-1); 
+    const d = new Date(); 
+    const year = d.getFullYear(); 
+    const month = d.getMonth(); 
+    const todayDate = d.getDate();
+    const firstDay = new Date(year, month, 1).getDay(); 
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    let monthCycles = 0; 
+    const days = Array(firstDay).fill(-1); 
     for (let i = 1; i <= daysInMonth; i++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
       const cycles = parseInt(localStorage.getItem(`rehab_cycles_${dateStr}`) || '0', 10);
-      monthCycles += cycles; days.push(cycles);
+      monthCycles += cycles; 
+      days.push(cycles);
     }
     const todayStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(todayDate).padStart(2, '0')}`;
     const todayCycles = parseInt(localStorage.getItem(`rehab_cycles_${todayStr}`) || '0', 10);
@@ -248,12 +333,20 @@ export default function EyeComfortApp() {
 
     const fallbackCopy = () => {
       try {
-        const textArea = document.createElement("textarea"); textArea.value = textToShare;
-        textArea.style.top = "0"; textArea.style.left = "0"; textArea.style.position = "fixed";
-        document.body.appendChild(textArea); textArea.focus(); textArea.select();
-        document.execCommand("copy"); document.body.removeChild(textArea);
+        const textArea = document.createElement("textarea"); 
+        textArea.value = textToShare;
+        textArea.style.top = "0"; 
+        textArea.style.left = "0"; 
+        textArea.style.position = "fixed";
+        document.body.appendChild(textArea); 
+        textArea.focus(); 
+        textArea.select();
+        document.execCommand("copy"); 
+        document.body.removeChild(textArea);
         alert("✅ 已成功複製專屬打卡紀錄！\n請直接貼上分享給您的好友或群組。");
-      } catch (err) { alert("複製失敗，請手動截圖分享。"); }
+      } catch (err) { 
+        alert("複製失敗，請手動截圖分享。"); 
+      }
     };
 
     try {
@@ -261,9 +354,14 @@ export default function EyeComfortApp() {
         const res = await liff.shareTargetPicker([{ type: "text", text: textToShare }]);
         if (res) return; 
       }
-      if (navigator.share) { await navigator.share({ title: 'Aura EyeGym 視覺復健打卡', text: textToShare }); return; }
+      if (navigator.share) { 
+        await navigator.share({ title: 'Aura EyeGym 視覺復健打卡', text: textToShare }); 
+        return; 
+      }
       fallbackCopy();
-    } catch (e) { fallbackCopy(); }
+    } catch (e) { 
+      fallbackCopy(); 
+    }
   };
 
   useEffect(() => {
@@ -272,49 +370,81 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (完美 1/3 邊界限制)
+  // Three.js 引擎與動畫 
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
-    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0f141e);
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000); camera.position.z = 5;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); renderer.setSize(window.innerWidth, window.innerHeight);
-    canvasRef.current.appendChild(renderer.domElement); scene.add(new THREE.AmbientLight(0xfffdd0, 0.6));
+    const scene = new THREE.Scene(); 
+    scene.background = new THREE.Color(0x0f141e);
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000); 
+    camera.position.z = 5;
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); 
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    canvasRef.current.appendChild(renderer.domElement); 
+    scene.add(new THREE.AmbientLight(0xfffdd0, 0.6));
 
     const sopGroup = new THREE.Group(); sopGroup.position.y = 12;
     const sopMat = new THREE.MeshStandardMaterial({ color: 0x6b8e23, emissive: 0x2e4b1c, wireframe: true, transparent: true });
     const focusTarget = new THREE.Mesh(new THREE.SphereGeometry(8, 32, 32), sopMat);
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true });
-    focusTarget.add(new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 16), coreMat)); sopGroup.add(focusTarget); scene.add(sopGroup);
+    focusTarget.add(new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 16), coreMat)); 
+    sopGroup.add(focusTarget); 
+    scene.add(sopGroup);
 
     const stretchGroup = new THREE.Group();
     const stretchOrb = new THREE.Mesh(new THREE.SphereGeometry(1.5, 32, 32), new THREE.MeshBasicMaterial({ color: 0xff9900 }));
-    stretchOrb.add(new THREE.PointLight(0xffaa00, 2.5, 60)); stretchGroup.add(stretchOrb); scene.add(stretchGroup);
+    stretchOrb.add(new THREE.PointLight(0xffaa00, 2.5, 60)); 
+    stretchGroup.add(stretchOrb); 
+    scene.add(stretchGroup);
 
     const chaserGroup = new THREE.Group();
     const chaserOrb = new THREE.Mesh(new THREE.SphereGeometry(3, 32, 32), new THREE.MeshBasicMaterial({ color: 0xffd700, transparent: true }));
-    chaserOrb.add(new THREE.PointLight(0xffd700, 2.5, 80)); chaserGroup.add(chaserOrb); scene.add(chaserGroup);
+    chaserOrb.add(new THREE.PointLight(0xffd700, 2.5, 80)); 
+    chaserGroup.add(chaserOrb); 
+    scene.add(chaserGroup);
 
     const breatheGroup = new THREE.Group();
-    const particleCount = 2000; const particlesGeo = new THREE.BufferGeometry(); const posArray = new Float32Array(particleCount * 3);
+    const particleCount = 2000; 
+    const particlesGeo = new THREE.BufferGeometry(); 
+    const posArray = new Float32Array(particleCount * 3);
     for(let i = 0; i < particleCount * 3; i++) posArray[i] = (Math.random() - 0.5) * 60;
     particlesGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
     const particlesMat = new THREE.PointsMaterial({ size: 0.15, color: 0x00ffcc, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-    const particleSystem = new THREE.Points(particlesGeo, particlesMat); breatheGroup.add(particleSystem); breatheGroup.position.z = -20; scene.add(breatheGroup);
+    const particleSystem = new THREE.Points(particlesGeo, particlesMat); 
+    breatheGroup.add(particleSystem); 
+    breatheGroup.position.z = -20; 
+    scene.add(breatheGroup);
 
     const focusGroup = new THREE.Group();
-    const focusRing = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.8, 32, 1, 0, Math.PI * 1.7), new MeshBasicMaterial({ color: 0xff3366, side: THREE.DoubleSide, transparent: true }));
-    focusGroup.add(focusRing); scene.add(focusGroup);
+    // 修正：加入 THREE. 前綴
+    const focusRing = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.8, 32, 1, 0, Math.PI * 1.7), new THREE.MeshBasicMaterial({ color: 0xff3366, side: THREE.DoubleSide, transparent: true }));
+    focusGroup.add(focusRing); 
+    scene.add(focusGroup);
 
     const amslerGroup = new THREE.Group();
-    const gridHelper = new THREE.GridHelper(30, 30, 0x557799, 0x445566); gridHelper.rotation.x = Math.PI / 2; gridHelper.position.z = -15; amslerGroup.add(gridHelper);
-    const centerDot = new THREE.Mesh(new THREE.CircleGeometry(0.3, 32), new THREE.MeshBasicMaterial({ color: 0xffffff })); centerDot.position.z = -14.9; amslerGroup.add(centerDot); scene.add(amslerGroup);
+    const gridHelper = new THREE.GridHelper(30, 30, 0x557799, 0x445566); 
+    gridHelper.rotation.x = Math.PI / 2; 
+    gridHelper.position.z = -15; 
+    amslerGroup.add(gridHelper);
+    const centerDot = new THREE.Mesh(new THREE.CircleGeometry(0.3, 32), new THREE.MeshBasicMaterial({ color: 0xffffff })); 
+    centerDot.position.z = -14.9; 
+    amslerGroup.add(centerDot); 
+    scene.add(amslerGroup);
 
     const astigGroup = new THREE.Group();
-    for (let i = 0; i < 12; i++) { const line = new THREE.Mesh(new THREE.PlaneGeometry(25, 0.3), new THREE.MeshBasicMaterial({ color: 0xffffff })); line.rotation.z = (i * Math.PI) / 12; astigGroup.add(line); }
-    const astigCenterDot = new THREE.Mesh(new THREE.CircleGeometry(0.8, 32), new THREE.MeshBasicMaterial({ color: 0xff3333 })); astigCenterDot.position.z = 0.1; astigGroup.add(astigCenterDot); astigGroup.position.z = -25; scene.add(astigGroup);
+    for (let i = 0; i < 12; i++) { 
+      const line = new THREE.Mesh(new THREE.PlaneGeometry(25, 0.3), new THREE.MeshBasicMaterial({ color: 0xffffff })); 
+      line.rotation.z = (i * Math.PI) / 12; 
+      astigGroup.add(line); 
+    }
+    const astigCenterDot = new THREE.Mesh(new THREE.CircleGeometry(0.8, 32), new THREE.MeshBasicMaterial({ color: 0xff3333 })); 
+    astigCenterDot.position.z = 0.1; 
+    astigGroup.add(astigCenterDot); 
+    astigGroup.position.z = -25; 
+    scene.add(astigGroup);
 
-    const allModules = [sopGroup, stretchGroup, chaserGroup, breatheGroup, focusGroup, amslerGroup, astigGroup]; allModules.forEach((m: any) => m.visible = false);
+    const allModules = [sopGroup, stretchGroup, chaserGroup, breatheGroup, focusGroup, amslerGroup, astigGroup]; 
+    allModules.forEach((m: any) => m.visible = false);
     const stimulusBalls: any[] = [];
 
     engineRef.current = {
@@ -330,10 +460,19 @@ export default function EyeComfortApp() {
       },
       spawnBall: () => {
         const ball = new THREE.Mesh(new THREE.SphereGeometry(0.8, 32, 32), new THREE.MeshBasicMaterial({ color: 0xf5f5dc, transparent: true, opacity: 0.8, depthWrite: false }));
-        ball.position.set((Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15, -70); sopGroup.add(ball); stimulusBalls.push(ball);
+        ball.position.set((Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15, -70); 
+        sopGroup.add(ball); 
+        stimulusBalls.push(ball);
       },
-      updateFocusRing: (step: number) => { focusRing.material.color.setHex(focusColors[step]); focusRing.rotation.z = Math.floor(Math.random() * 4) * (Math.PI / 2); },
-      stop: () => { allModules.forEach((m: any) => m.visible = false); stimulusBalls.forEach((b: any) => { if(b.parent) b.parent.remove(b); b.geometry.dispose(); b.material.dispose(); }); stimulusBalls.length = 0; }
+      updateFocusRing: (step: number) => { 
+        focusRing.material.color.setHex(focusColors[step]); 
+        focusRing.rotation.z = Math.floor(Math.random() * 4) * (Math.PI / 2); 
+      },
+      stop: () => { 
+        allModules.forEach((m: any) => m.visible = false); 
+        stimulusBalls.forEach((b: any) => { if(b.parent) b.parent.remove(b); b.geometry.dispose(); b.material.dispose(); }); 
+        stimulusBalls.length = 0; 
+      }
     };
 
     let animationFrameId: number;
@@ -360,15 +499,28 @@ export default function EyeComfortApp() {
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
       
       if (mod === 'sop' && gameState.current.phase !== 'COMPLETED') {
-        focusTarget.rotation.x += 0.002; focusTarget.rotation.y += 0.003; focusTarget.position.z = -50;
-        const scale = 1 + Math.cos(timeDelta) * 0.25; focusTarget.scale.set(scale, scale, scale);
+        focusTarget.rotation.x += 0.002; 
+        focusTarget.rotation.y += 0.003; 
+        focusTarget.position.z = -50;
+        const scale = 1 + Math.cos(timeDelta) * 0.25; 
+        focusTarget.scale.set(scale, scale, scale);
         const targetOpacity = (gameState.current.phase === 'CLOSING') ? 0.05 : 1.0;
-        sopMat.opacity += (targetOpacity - sopMat.opacity) * 0.05; coreMat.opacity += (targetOpacity - coreMat.opacity) * 0.05;
+        sopMat.opacity += (targetOpacity - sopMat.opacity) * 0.05; 
+        coreMat.opacity += (targetOpacity - coreMat.opacity) * 0.05;
         for (let i = stimulusBalls.length - 1; i >= 0; i--) {
           const ball = stimulusBalls[i]; ball.position.z += 1.5;
-          if (ball.position.z > -10) { ball.position.z += 3.0; ball.scale.addScalar(0.8); ball.material.opacity = 1.0; ball.material.color.setHex(0xffffff); } 
-          else ball.scale.addScalar(0.015);
-          if (ball.position.z > camera.position.z) { if(ball.parent) ball.parent.remove(ball); ball.geometry.dispose(); ball.material.dispose(); stimulusBalls.splice(i, 1); }
+          if (ball.position.z > -10) { 
+            ball.position.z += 3.0; 
+            ball.scale.addScalar(0.8); 
+            ball.material.opacity = 1.0; 
+            ball.material.color.setHex(0xffffff); 
+          } else ball.scale.addScalar(0.015);
+          if (ball.position.z > camera.position.z) { 
+            if(ball.parent) ball.parent.remove(ball); 
+            ball.geometry.dispose(); 
+            ball.material.dispose(); 
+            stimulusBalls.splice(i, 1); 
+          }
         }
       }
       
@@ -383,36 +535,62 @@ export default function EyeComfortApp() {
         const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToCamera;
         const visibleWidth = visibleHeight * camera.aspect;
         
-        const edgeX = visibleWidth / 2; const edgeY = visibleHeight / 2;
-        const ampX = edgeX - 0.5; const ampY = Math.min(edgeY * 0.6, 12); 
+        const edgeX = visibleWidth / 2; 
+        const edgeY = visibleHeight / 2;
+        const ampX = edgeX - 0.5; 
+        const ampY = Math.min(edgeY * 0.6, 12); 
+        
         stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, currentZ);
       }
       
-      if (mod === 'breathe' || mod === 'chaser') { particleSystem.rotation.y += 0.0005; particleSystem.rotation.z += 0.0002; }
+      if (mod === 'breathe' || mod === 'chaser') { 
+        particleSystem.rotation.y += 0.0005; 
+        particleSystem.rotation.z += 0.0002; 
+      }
+      
       if (mod === 'chaser' && gameState.current.chaserTimeLeft > 0) {
         chaserOrb.position.z -= gameState.current.prescription.chaserSpeed;
         if (chaserOrb.position.z < -120) { 
           gameState.current.chaserScore++; playDingSound(); 
-          chaserOrb.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -10); chaserOrb.scale.setScalar(1); chaserOrb.material.opacity = 1;
+          chaserOrb.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -10); 
+          chaserOrb.scale.setScalar(1); 
+          chaserOrb.material.opacity = 1;
         } else {
           const progress = (chaserOrb.position.z + 10) / -110;
-          const currentScale = Math.max(0, 1 - progress * 0.9); chaserOrb.scale.setScalar(currentScale); chaserOrb.material.opacity = 1 - Math.pow(progress, 3);
+          const currentScale = Math.max(0, 1 - progress * 0.9); 
+          chaserOrb.scale.setScalar(currentScale); 
+          chaserOrb.material.opacity = 1 - Math.pow(progress, 3);
         }
       }
+      
       if (mod === 'breathe' && gameState.current.breatheTimeLeft > 0) {
         const breathCycle = Math.sin((gameState.current.activeTimeAcc % 10000) / 10000 * Math.PI * 2);
-        const currentScale = 1.05 + breathCycle * 0.25; particleSystem.scale.setScalar(currentScale); particlesMat.color.setHSL(0.5 + breathCycle * 0.1, 0.8, 0.4 + breathCycle * 0.2);
+        const currentScale = 1.05 + breathCycle * 0.25; 
+        particleSystem.scale.setScalar(currentScale); 
+        particlesMat.color.setHSL(0.5 + breathCycle * 0.1, 0.8, 0.4 + breathCycle * 0.2);
       }
+      
       if (mod === 'focus' && gameState.current.focusTimeLeft > 0) {
         const dynamicFocusDepths = [-1, -15, -35, gameState.current.prescription.maxDepth];
         focusGroup.position.z += (dynamicFocusDepths[gameState.current.focusStep] - focusGroup.position.z) * 0.15;
       }
       renderer.render(scene, camera);
     };
+    
     animate();
-    const handleResize = () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
+    
+    const handleResize = () => { 
+      camera.aspect = window.innerWidth / window.innerHeight; 
+      camera.updateProjectionMatrix(); 
+      renderer.setSize(window.innerWidth, window.innerHeight); 
+    };
     window.addEventListener('resize', handleResize);
-    return () => { window.removeEventListener('resize', handleResize); cancelAnimationFrame(animationFrameId); if (canvasRef.current) canvasRef.current.removeChild(renderer.domElement); renderer.dispose(); };
+    return () => { 
+      window.removeEventListener('resize', handleResize); 
+      cancelAnimationFrame(animationFrameId); 
+      if (canvasRef.current) canvasRef.current.removeChild(renderer.domElement); 
+      renderer.dispose(); 
+    };
   }, [playDingSound]); 
 
   // ==========================================
@@ -607,6 +785,7 @@ export default function EyeComfortApp() {
             )}
           </p>
 
+          {/* 專利實作：動態 AI 處方展示 UI */}
           <div className="bg-[#162b2b] border border-[#00ffcc] rounded-lg p-3 mb-[30px] w-full max-w-[800px] text-center shadow-[0_0_10px_rgba(0,255,204,0.2)]">
             <p className="text-[#00ffcc] text-[14px] m-0 mb-1">🤖 邊緣運算自適應引擎啟動中</p>
             <p className="text-[#fffdd0] text-[16px] m-0 font-bold">為您生成的動態數位處方：強度 Level {aiPrescriptionLevel}</p>
@@ -828,7 +1007,7 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 距離過近警告 (依然顯示 20公分，但底層實體觸發距離已拉寬至 18公分) */}
+          {/* 距離過近警告 */}
           {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">🛑</div>

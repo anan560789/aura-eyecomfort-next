@@ -47,9 +47,9 @@ interface DiagnosticData {
 
 export default function EyeComfortApp() {
   // ==========================================
-  // 4. React UI 狀態管理
+  // 4. React UI 狀態管理 (新增 INFO_RPE 視圖)
   // ==========================================
-  const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
+  const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
   const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
   const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: string, top: string, showContinue: boolean, showInput: boolean }>({ title: '', timer: '', top: '70%', showContinue: false, showInput: false });
@@ -284,7 +284,9 @@ export default function EyeComfortApp() {
         focusRing.material.color.setHex(focusColors[step]);
         focusRing.rotation.z = Math.floor(Math.random() * 4) * (Math.PI / 2);
       },
-      clearBalls: () => {
+      // 解決返回大廳的殘留 Bug：加入強制隱藏所有 3D 群組的邏輯
+      stop: () => {
+        allModules.forEach(m => m.visible = false);
         stimulusBalls.forEach(b => { if(b.parent) b.parent.remove(b); b.geometry.dispose(); b.material.dispose(); });
         stimulusBalls.length = 0;
       }
@@ -490,7 +492,9 @@ export default function EyeComfortApp() {
 
   const returnToDashboard = () => {
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module)) stopBGM();
-    gameState.current.module = 'DASHBOARD'; engineRef.current?.clearBalls();
+    gameState.current.module = 'DASHBOARD'; 
+    // 呼叫新加入的 stop 方法，徹底清除所有 3D 物件的殘留
+    engineRef.current?.stop();
     if (noSleepRef.current) { noSleepRef.current.disable(); }
     setCurrentView('DASHBOARD'); setActiveModule(null);
   };
@@ -504,7 +508,7 @@ export default function EyeComfortApp() {
     <div className="relative w-screen h-screen overflow-hidden bg-[#0f141e] font-sans">
       <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
 
-      {/* 視圖 1: 大廳 (DASHBOARD) */}
+      {/* 視圖 1: 大廳 (DASHBOARD) - 調整了按鈕排序 */}
       {currentView === 'DASHBOARD' && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-start py-10 px-5 overflow-y-auto box-border">
           <h1 className="text-[#fffdd0] text-[32px] text-center mb-[15px] tracking-[1px]"><div className="text-[55px] mb-[10px]">👁️</div>數位眼科與視覺復健中心</h1>
@@ -514,11 +518,6 @@ export default function EyeComfortApp() {
             )}
           </p>
           <div className="w-full max-w-[800px] flex flex-col gap-5 mb-[40px]">
-            
-            <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
-              <h3 className="text-[#00ffcc] text-[22px] mb-2 font-bold">🔬 旗艦護眼營養百科</h3>
-              <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解針對不同眼睛部位結構的專屬營養配方解析</p>
-            </div>
             
             <div onClick={() => setCurrentView('INFO_MODULES')} className="w-full bg-[#1a2233] border-2 border-[#E5B55E] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(229,181,94,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
               <h3 className="text-[#E5B55E] text-[22px] mb-2 font-bold">📖 數位復健模組與醫學學理說明</h3>
@@ -530,7 +529,6 @@ export default function EyeComfortApp() {
               <p className="text-[#8b9bb4] text-[16px] m-0">點擊查看您的打卡紀錄，分享給家人與醫師</p>
             </div>
             
-            {/* 模組按鈕：恢復為 showModuleIntro 而不是直接跳 INFO_MODULES */}
             <div className="flex flex-col gap-5 w-full">
               <ModuleCard title="🚀 45秒快速舒緩" desc="結合遠眺聚焦、隨機白球衝擊與深層閉眼潤滑。" color="#FF6B6B" onClick={() => showModuleIntro('sop')} />
               <ModuleCard title="🔄 動態 3D 眼肌伸展" desc="引導眼球進行 ∞ 字型極限軌跡，強迫拉伸控制眼球的六條眼外肌。" color="#4D96FF" onClick={() => showModuleIntro('stretch')} />
@@ -540,6 +538,13 @@ export default function EyeComfortApp() {
               <ModuleCard title="🔍 互動式黃斑部評估" desc="專利級數位化阿姆斯勒方格表，包含左右眼自適應風險運算。" color="#9D4EDD" onClick={() => startTraining('amsler')} />
               <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛在散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => startTraining('astigmatism')} />
             </div>
+
+            {/* 將旗艦護眼營養百科移至最下方 */}
+            <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02] mt-2">
+              <h3 className="text-[#00ffcc] text-[22px] mb-2 font-bold">🔬 旗艦護眼營養百科</h3>
+              <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解針對不同眼睛部位結構的專屬營養配方解析</p>
+            </div>
+
           </div>
         </div>
       )}
@@ -558,6 +563,11 @@ export default function EyeComfortApp() {
 
             <p className="text-[#8b9bb4] text-[18px] leading-[1.6] mb-5 bg-[#162b2b] p-4 rounded-lg"><strong className="text-[#00ffcc]">閱讀重點｜</strong>眼睛是非常精密的器官，不同的解剖構造需要對應不同的關鍵營養素。單一成分無法顧及全眼健康，以下為具備醫學學理支持的營養素對應表：</p>
             
+            {/* 新增 RPE 詳細說明入口按鈕 */}
+            <button onClick={() => setCurrentView('INFO_RPE')} className="w-full py-4 mb-6 bg-[#2B579A] text-white border-none rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(43,87,154,0.4)] transition-transform hover:scale-[1.02]">
+              👉 深度解析：為什麼視網膜色素上皮 (RPE) 很重要？
+            </button>
+
             <div className="overflow-x-auto mb-[30px] rounded-lg shadow-lg">
               <table className="w-full border-collapse text-[#fffdd0] text-[17px] leading-[1.6]">
                 <thead>
@@ -576,6 +586,42 @@ export default function EyeComfortApp() {
             <div className="bg-[#2a1f1a] p-5 rounded-lg border border-[#e5b55e]">
               <h3 className="text-[#e5b55e] text-[20px] font-bold mb-3">💡 綜合保養建議</h3>
               <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0">在挑選護眼營養配方時，建議尋求具備多重機轉（如同時涵蓋黃斑部抗氧化、RPE 細胞滋養、淚膜穩定）的複方設計，並配合本中心的數位眼肌放鬆模組，達到內外兼修的保養效果。</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 新增的視圖：RPE 與脂褐質說明頁面 (INFO_RPE) */}
+      {currentView === 'INFO_RPE' && (
+        <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
+          <div className="max-w-[800px] mx-auto pb-[50px]">
+            <button onClick={() => setCurrentView('INFO_NUTRIENT')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold shadow-lg">🔙 返回營養百科</button>
+            <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#2B579A] pb-2.5 mb-[20px] font-bold">🧬 為什麼視網膜色素上皮 (RPE) 很重要？</h2>
+            
+            <div className="bg-[#161b22] p-6 rounded-xl border-l-4 border-[#E5B55E] mb-6">
+              <h3 className="text-[#E5B55E] text-[22px] font-bold mb-3">👁️ 眼睛的專屬垃圾處理廠</h3>
+              <p className="text-[#fffdd0] text-[17px] leading-[1.8] m-0">
+                視網膜色素上皮細胞（RPE）是視網膜感光細胞的後勤部隊。感光細胞每天在感光的過程中會產生大量的「代謝廢物」。RPE 的重要任務就是像垃圾處理廠一樣，吞噬並分解這些廢物。<br/><br/>
+                如果 RPE 細胞因為老化、氧化壓力或缺氧而功能衰退，這些代謝廢物就會在視網膜底層不斷堆積，形成無法被代謝的<strong>「脂褐質 (Lipofuscin)」</strong>與隱結 (Drusen)，進而大幅增加黃斑部病變 (AMD) 的風險。
+              </p>
+            </div>
+
+            <div className="bg-[#162b2b] p-6 rounded-xl border-l-4 border-[#00ffcc] mb-6">
+              <h3 className="text-[#00ffcc] text-[22px] font-bold mb-3">🔬 Propolins 在 RPE 的前臨床研究</h3>
+              <p className="text-[#fffdd0] text-[17px] leading-[1.8] mb-4">
+                根據相關眼疾專利與細胞動物研究，神經滋養物質 Propolins（特別是 Propolin G）最適合定位在作用於 RPE：
+              </p>
+              <ul className="text-[#8b9bb4] text-[17px] leading-[1.8] pl-5 m-0 space-y-2">
+                <li><strong className="text-[#fffdd0]">細胞層級保護：</strong>在 ARPE-19 細胞實驗中，顯示能提高氧化或缺氧損傷下的細胞存活率。它的機制是提供受損細胞保護，而非無限制刺激健康細胞增生。</li>
+                <li><strong className="text-[#fffdd0]">動物實驗恢復：</strong>在 NaIO3 誘導的乾性 AMD 大鼠模型中，使用 1% 專利滴眼液能讓 ERG c-wave 回升約 4 倍，顯示 RPE 功能獲得部分顯著恢復。</li>
+              </ul>
+            </div>
+
+            <div className="mb-6 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d]">
+              <h3 className="text-[#ff4d4d] text-[18px] font-bold mb-2">⚠️ 證據界線與使用提醒</h3>
+              <p className="text-[#d1b0b0] text-[15px] leading-[1.8] m-0">
+                上述結果為細胞與動物的前臨床試驗證據（且動物採用滴眼途徑）。因此，不能直接換算成市售口服保健品的人體有效劑量，亦不能據此宣稱能預防或治療人體黃斑部病變 (AMD)。市售口服蜂膠膠囊並非無菌眼藥水，絕不可自行滴入眼睛。
+              </p>
             </div>
           </div>
         </div>
@@ -653,7 +699,7 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 5: 訓練前說明頁面 (INFO_INTRO) 完整還原 */}
+      {/* 視圖 5: 訓練前說明頁面 (INFO_INTRO) */}
       {currentView === 'INFO_INTRO' && activeModule && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -722,7 +768,8 @@ export default function EyeComfortApp() {
                   : "系統運算警告：偵測到潛在的視覺扭曲或模糊異常。這可能是黃斑部或散光軸向的疲勞警訊，強烈建議您盡速尋求專業眼科醫師的精密儀器檢查！"}
               </p>
             </div>
-            <button onClick={() => setCurrentView('DASHBOARD')} className="w-full py-4 bg-[#9D4EDD] text-white rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(157,78,221,0.5)]">完成並返回大廳</button>
+            {/* 返回大廳按鈕同樣會觸發 clear 邏輯 */}
+            <button onClick={returnToDashboard} className="w-full py-4 bg-[#9D4EDD] text-white rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(157,78,221,0.5)]">完成並返回大廳</button>
           </div>
         </div>
       )}

@@ -48,9 +48,14 @@ export default function EyeComfortApp() {
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
 
   // ==========================================
-  // 3. AI 視線追蹤核心狀態 (全新加入)
+  // 3. AI 視線追蹤核心狀態
   // ==========================================
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION'>('IDLE');
+  
+  // 核心修復：使用 Ref 儲存最新的 trackingState，避免觸發 Three.js 重新渲染
+  const trackingStateRef = useRef(trackingState);
+  useEffect(() => { trackingStateRef.current = trackingState; }, [trackingState]);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
   const trackingLoopRef = useRef<any>(null);
@@ -65,12 +70,9 @@ export default function EyeComfortApp() {
     module: 'DASHBOARD', cycle: 1, phase: 'LOOKING', sopTimeLeft: 10, stretchTimeLeft: 45, chaserTimeLeft: 60, chaserScore: 0,
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
-    activeTimeAcc: 0 // 用於追蹤真正有在看的動畫時間
+    activeTimeAcc: 0
   });
 
-  // ==========================================
-  // AI 追蹤方法宣告
-  // ==========================================
   const startTrackingLoop = useCallback(() => {
     let lostFrames = 0;
     const track = () => {
@@ -85,20 +87,20 @@ export default function EyeComfortApp() {
           lostFrames = 0;
         } else {
           lostFrames++;
-          // 容錯率：大約 1.5 秒抓不到 (15 frames @ 10fps)，就判定丟失
           if (lostFrames > 15) {
             isTrackingRef.current = false;
             setTrackingState('LOST');
           }
         }
       }
-      trackingLoopRef.current = setTimeout(track, 100); // 降頻：每秒只算 10 次，防止發燙
+      trackingLoopRef.current = setTimeout(track, 100); 
     };
     track();
   }, []);
 
   const initEyeTracking = useCallback(async () => {
     setTrackingState('INITIALIZING');
+    isTrackingRef.current = false;
     try {
       const { FaceLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
       const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
@@ -107,7 +109,7 @@ export default function EyeComfortApp() {
         faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            delegate: "GPU" // 強制使用 GPU 加速
+            delegate: "GPU"
           },
           outputFaceBlendshapes: false,
           runningMode: "VIDEO",
@@ -119,14 +121,11 @@ export default function EyeComfortApp() {
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play();
-        videoRef.current.onloadeddata = () => {
-          startTrackingLoop();
-        };
+        videoRef.current.onloadeddata = () => { startTrackingLoop(); };
       }
     } catch (err) {
       console.error("相機存取失敗", err);
       setTrackingState('NO_PERMISSION');
-      // 如果拒絕權限，我們仍允許盲測運行 (退回無 AI 模式)
       isTrackingRef.current = true; 
     }
   }, [startTrackingLoop]);
@@ -141,15 +140,8 @@ export default function EyeComfortApp() {
     setTrackingState('IDLE');
   }, []);
 
-  // 組件卸載時清除相機
-  useEffect(() => {
-    return () => { stopEyeTracking(); };
-  }, [stopEyeTracking]);
+  useEffect(() => { return () => { stopEyeTracking(); }; }, [stopEyeTracking]);
 
-
-  // ==========================================
-  // 其他基礎設定
-  // ==========================================
   useEffect(() => {
     let NoSleepModule: any;
     import('nosleep.js').then((module) => { NoSleepModule = module.default; noSleepRef.current = new NoSleepModule(); }).catch(err => console.error(err));
@@ -238,7 +230,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (結合 AI 凍結邏輯)
+  // Three.js 引擎與動畫 (已移除 trackingState 依賴)
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -315,11 +307,12 @@ export default function EyeComfortApp() {
       lastRenderTime = now;
 
       const requiresTracking = ['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(mod);
+      const currentTrackState = trackingStateRef.current;
       
-      // AI 專利防呆核心：如果需要追蹤，且現在沒有追蹤到，且不是休息時間，則「凍結動畫」
-      if (requiresTracking && !isTrackingRef.current && trackingState !== 'INITIALIZING' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED') {
-        renderer.render(scene, camera);
-        return; // 凍結
+      // 核心修復：如果 AI 正在載入或丟失，只渲染當前畫面，但不推進時間與動畫！
+      if (requiresTracking) {
+        if (currentTrackState === 'INITIALIZING') { renderer.render(scene, camera); return; }
+        if (currentTrackState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED') { renderer.render(scene, camera); return; }
       }
 
       gameState.current.activeTimeAcc += delta;
@@ -364,8 +357,10 @@ export default function EyeComfortApp() {
     animate();
     const handleResize = () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
     window.addEventListener('resize', handleResize);
+    
+    // 依賴陣列中移除了 trackingState，確保引擎不會被重複初始化！
     return () => { window.removeEventListener('resize', handleResize); cancelAnimationFrame(animationFrameId); if (canvasRef.current) canvasRef.current.removeChild(renderer.domElement); renderer.dispose(); };
-  }, [playDingSound, trackingState]);
+  }, [playDingSound]); 
 
   // ==========================================
   // 計時器邏輯 (結合 AI 凍結)
@@ -422,10 +417,12 @@ export default function EyeComfortApp() {
       if (state.module === 'DASHBOARD' || currentView === 'TEST_REPORT') return;
 
       const requiresTracking = ['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(state.module);
+      const currentTrackState = trackingStateRef.current;
       
-      // AI 專利防呆核心：如果失去視線，連倒數計時也一起凍結！
-      if (requiresTracking && !isTrackingRef.current && trackingState !== 'INITIALIZING' && !state.isResting && state.phase !== 'COMPLETED') {
-        return; // 凍結時間
+      // 核心修復：如果 AI 正在載入或失去視線，直接 return 阻止計時器運作！
+      if (requiresTracking) {
+        if (currentTrackState === 'INITIALIZING') return;
+        if (currentTrackState === 'LOST' && !state.isResting && state.phase !== 'COMPLETED') return;
       }
 
       if (requiresTracking && state.isResting) {
@@ -482,10 +479,10 @@ export default function EyeComfortApp() {
       updateUI();
     }, 1000);
     return () => clearInterval(timerId);
-  }, [playDingSound, dipBGM, updateUI, logTraining, currentView, trackingState]);
+  }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
   // ==========================================
-  // 視圖切換與按鈕處理 (整合 AI 啟動)
+  // 視圖切換與按鈕處理
   // ==========================================
   const startTraining = (type: string) => {
     setActiveModule(type); setCurrentView('TRAINING');
@@ -494,10 +491,7 @@ export default function EyeComfortApp() {
     
     if (noSleepRef.current) noSleepRef.current.enable();
 
-    // 只有 1~5 的訓練模組需要啟動鏡頭追蹤
-    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
-      initEyeTracking();
-    }
+    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) { initEyeTracking(); }
     
     if (type === 'sop') { state.cycle = 1; state.phase = 'LOOKING'; state.sopTimeLeft = 10; playBGM('/game1.mp3'); }
     else if (type === 'stretch') { state.stretchTimeLeft = 45; playBGM('/game2.mp3'); }
@@ -510,9 +504,7 @@ export default function EyeComfortApp() {
   };
 
   const returnToDashboard = () => {
-    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module)) {
-      stopBGM(); stopEyeTracking();
-    }
+    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module)) { stopBGM(); stopEyeTracking(); }
     gameState.current.module = 'DASHBOARD'; 
     engineRef.current?.stop();
     if (noSleepRef.current) noSleepRef.current.disable();
@@ -567,7 +559,7 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 (與上版完全相同，折疊以省版面) */}
+      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 (折疊以省版面) */}
       {currentView === 'INFO_NUTRIENT' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -740,9 +732,17 @@ export default function EyeComfortApp() {
           {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
             <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none">
               <video ref={videoRef} className="w-full h-full object-cover transform scale-x-[-1]" playsInline muted autoPlay />
-              {trackingState === 'INITIALIZING' && <div className="absolute inset-0 bg-black/70 flex items-center justify-center text-[#E5B55E] text-[12px] font-bold">AI 載入中...</div>}
-              {trackingState === 'NO_PERMISSION' && <div className="absolute inset-0 bg-red-900 flex items-center justify-center text-white text-[12px] font-bold text-center px-2">無相機權限<br/>(盲測模式)</div>}
-              {trackingState === 'LOST' && <div className="absolute inset-0 bg-red-500/60 flex items-center justify-center text-white text-[16px] font-bold animate-pulse">視線遺失</div>}
+            </div>
+          )}
+
+          {/* 全新修復：載入中全螢幕等待畫面 (完全凍結時間) */}
+          {trackingState === 'INITIALIZING' && (
+            <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
+              <div className="text-[60px] mb-4 animate-spin">⏳</div>
+              <h2 className="text-[#00ffcc] text-[28px] font-bold mb-4 tracking-widest">AI 視覺引擎載入中</h2>
+              <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
+                正在啟動前置鏡頭與安全辨識模組...<br/>這可能需要幾秒鐘的時間，請稍候。
+              </p>
             </div>
           )}
 

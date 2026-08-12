@@ -25,9 +25,6 @@ const focusTexts = [
   <div key="3"><span className="text-[#ff809f] font-bold">【深空極限】</span><br/>盡力即可，請放鬆不勉強</div>
 ];
 
-// ==========================================
-// 2. 合規的日常保健學理說明
-// ==========================================
 const medicalPrinciples: Record<string, any> = {
   sop: { icon: "🚀", title: "45秒快速舒緩", color: "#FF6B6B", principle: "此模組結合了「睫狀肌放鬆」、「動態視覺刺激」與「淚膜穩定」的保健概念。<br><br>透過注視遠近變化的球體，輔助舒緩水晶體對焦壓力；最後的用力閉眼動作，可協助眼瞼板腺分泌油脂，幫助維持淚膜水分。" },
   stretch: { icon: "🔄", title: "動態 3D 眼肌伸展", color: "#4D96FF", principle: "現代人長時間凝視手機，容易導致眼周肌肉緊繃。<br><br>本模組利用最大範圍的 ∞ 字型（無限大）視覺軌跡，引導控制眼球的六條眼外肌進行大範圍活動，幫助眼周肌肉伸展與放鬆。" },
@@ -48,17 +45,13 @@ export default function EyeComfortApp() {
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
 
   // ==========================================
-  // 3. AI 視線追蹤核心狀態
+  // 3. AI 視線追蹤狀態與引擎
   // ==========================================
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION'>('IDLE');
   
-  const trackingStateRef = useRef(trackingState);
-  useEffect(() => { trackingStateRef.current = trackingState; }, [trackingState]);
-
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
   const trackingLoopRef = useRef<any>(null);
-  const isTrackingRef = useRef(false);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<any>(null); 
@@ -69,7 +62,8 @@ export default function EyeComfortApp() {
     module: 'DASHBOARD', cycle: 1, phase: 'LOOKING', sopTimeLeft: 10, stretchTimeLeft: 45, chaserTimeLeft: 60, chaserScore: 0,
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
-    activeTimeAcc: 0
+    activeTimeAcc: 0,
+    aiStatus: 'IDLE' 
   });
 
   const startTrackingLoop = useCallback(() => {
@@ -80,48 +74,70 @@ export default function EyeComfortApp() {
       
       if (videoRef.current.readyState >= 2) {
         const results = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
+        
+        let isGazeLost = false;
+        let isEyesClosed = false;
+        let yawRatio = 1;
+        let pitchRatio = 1;
+
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-          // 專利級：臉部偏航角 (Yaw) 轉頭防呆演算法
           const lm = results.faceLandmarks[0];
-          const noseX = lm[1].x; 
-          const leftEyeX = lm[33].x; 
-          const rightEyeX = lm[263].x;
+          const noseX = lm[1].x; const leftEyeX = lm[33].x; const rightEyeX = lm[263].x;
+          const leftDist = Math.abs(noseX - leftEyeX); const rightDist = Math.abs(rightEyeX - noseX);
+          yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
           
-          const leftDist = Math.abs(noseX - leftEyeX);
-          const rightDist = Math.abs(rightEyeX - noseX);
+          const eyeNoseY = Math.abs(lm[1].y - lm[168].y); 
+          const noseMouthY = Math.abs(lm[13].y - lm[1].y); 
+          pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
+        }
+
+        // 專利級核心：讀取眼球向量與閉眼向量 (Blendshapes)
+        if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
+          const shapes = results.faceBlendshapes[0].categories;
           
-          // 計算雙眼到鼻子的比例。如果頭直視前方，比例約為 1。如果轉頭，比例會嚴重失衡。
-          const yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
+          // 8 個方向的眼球向量
+          const lookShapes = shapes.filter(s => 
+            ['eyeLookInLeft', 'eyeLookOutLeft', 'eyeLookUpLeft', 'eyeLookDownLeft',
+             'eyeLookInRight', 'eyeLookOutRight', 'eyeLookUpRight', 'eyeLookDownRight'].includes(s.categoryName)
+          );
           
-          if (yawRatio > 2.5) { // 比例大於 2.5 代表頭已經明顯轉開
-            lostFrames++;
-          } else {
-            lostFrames = 0;
-            if (!isTrackingRef.current) {
-              isTrackingRef.current = true;
-              trackingStateRef.current = 'TRACKING';
-              setTrackingState('TRACKING');
-            }
-          }
-        } else {
+          const blinkShapes = shapes.filter(s => ['eyeBlinkLeft', 'eyeBlinkRight'].includes(s.categoryName));
+
+          // 閾值 0.65：只要有一眼明顯看向別處，即判定視線遺失
+          if (lookShapes.some(s => s.score > 0.65)) isGazeLost = true;
+          // 閉眼防呆：避免訓練中途睡著作弊
+          if (blinkShapes.some(s => s.score > 0.6)) isEyesClosed = true;
+        }
+
+        // 邏輯豁免：如果模組 1 正在「閉眼」階段，則允許閉眼與不看螢幕
+        const isSopClosing = gameState.current.module === 'sop' && gameState.current.phase === 'CLOSING';
+
+        // 綜合判定：頭轉開、臉朝上/下、眼球沒看螢幕、閉著眼睛
+        if (!isSopClosing && (results.faceLandmarks.length === 0 || yawRatio > 2.0 || pitchRatio > 2.0 || isGazeLost || isEyesClosed)) {
           lostFrames++;
+        } else {
+          lostFrames = 0;
+          if (gameState.current.aiStatus !== 'TRACKING') {
+            gameState.current.aiStatus = 'TRACKING';
+            setTrackingState('TRACKING');
+          }
         }
         
-        // 降低容錯率：大約 3 frames (0.3秒) 抓不到立刻紅屏防呆
-        if (lostFrames > 3 && isTrackingRef.current) {
-          isTrackingRef.current = false;
-          trackingStateRef.current = 'LOST';
+        // 容錯率：3 frames (約 0.3秒)
+        if (lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') {
+          gameState.current.aiStatus = 'LOST';
           setTrackingState('LOST');
         }
       }
-      trackingLoopRef.current = setTimeout(track, 100); 
+      
+      trackingLoopRef.current = setTimeout(() => { requestAnimationFrame(track); }, 100);
     };
     track();
   }, []);
 
   const initEyeTracking = useCallback(async () => {
+    gameState.current.aiStatus = 'INIT';
     setTrackingState('INITIALIZING');
-    isTrackingRef.current = false;
     try {
       const { FaceLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
       const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
@@ -129,7 +145,8 @@ export default function EyeComfortApp() {
       if (!faceLandmarkerRef.current) {
         faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
-          outputFaceBlendshapes: false, runningMode: "VIDEO", numFaces: 1
+          outputFaceBlendshapes: true, // 核心升級：強制開啟 8 向眼球向量輸出
+          runningMode: "VIDEO", numFaces: 1
         });
       }
 
@@ -140,7 +157,8 @@ export default function EyeComfortApp() {
       }
     } catch (err) {
       console.error("相機存取失敗", err);
-      setTrackingState('NO_PERMISSION'); isTrackingRef.current = true; trackingStateRef.current = 'NO_PERMISSION';
+      gameState.current.aiStatus = 'NO_PERMISSION';
+      setTrackingState('NO_PERMISSION'); 
     }
   }, [startTrackingLoop]);
 
@@ -150,8 +168,7 @@ export default function EyeComfortApp() {
       (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       videoRef.current.srcObject = null;
     }
-    isTrackingRef.current = false;
-    trackingStateRef.current = 'IDLE';
+    gameState.current.aiStatus = 'IDLE';
     setTrackingState('IDLE');
   }, []);
 
@@ -246,7 +263,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (完美滑順軌跡版 + Mod 2 強度升級)
+  // Three.js 引擎與動畫 (完美還原平滑軌跡版)
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -319,17 +336,18 @@ export default function EyeComfortApp() {
       if (mod === 'DASHBOARD') { renderer.render(new THREE.Scene(), camera); return; }
 
       const now = performance.now();
-      const requiresTracking = ['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(mod);
-      const currentTrackState = trackingStateRef.current;
       
-      // 凍結狀態邏輯：更新 lastRenderTime 但不推進 activeTimeAcc
-      if (requiresTracking && (currentTrackState === 'INITIALIZING' || (currentTrackState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED'))) { 
+      // 修復邏輯豁免：模組1 閉眼階段不凍結動畫
+      const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(mod) || (mod === 'sop' && gameState.current.phase === 'LOOKING');
+      
+      const currentAiStatus = gameState.current.aiStatus;
+      
+      if (requiresTracking && (currentAiStatus === 'INIT' || (currentAiStatus === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED'))) { 
         lastRenderTime = now;
         renderer.render(scene, camera); return; 
       }
 
-      // 防卡頓機制：限制單次 delta 最大 50ms
-      const delta = Math.min(now - lastRenderTime, 50);
+      const delta = Math.min(now - lastRenderTime, 35);
       lastRenderTime = now;
       gameState.current.activeTimeAcc += delta;
       
@@ -348,15 +366,11 @@ export default function EyeComfortApp() {
         }
       }
       
-      // ===== 核心優化：模組 2 劇烈 3D 景深與縮放伸展 =====
+      // ===== 核心優化：還原 Mod 2 溫和伸展，保留精準 1/3 邊緣 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
         const speed = timeDelta * 0.8; 
         
-        // 導入動態 Z 軸：讓球在 -15 到 -45 之間劇烈穿梭
-        const zPos = -30 + Math.sin(speed * 1.5) * 15;
-        
-        // 數學演算：利用 FOV 動態計算在目前 zPos 時的螢幕真實寬高
-        const distToBall = camera.position.z - zPos; 
+        const distToBall = 35; 
         const vFovRad = (camera.fov * Math.PI) / 180;
         const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToBall;
         const visibleWidth = visibleHeight * camera.aspect;
@@ -364,15 +378,11 @@ export default function EyeComfortApp() {
         const edgeX = visibleWidth / 2;
         const edgeY = visibleHeight / 2;
         
-        // 球半徑 1.5。允許最多 1/3 的球 (距離1.0) 超出邊界
-        const ampX = edgeX - 0.5;
-        const ampY = Math.min(edgeY * 0.6, distToBall * 0.3); 
+        const ampX = edgeX - 0.5; // 只切出 1/3 的球體
+        const ampY = Math.min(edgeY * 0.6, 12); 
         
-        stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, zPos);
-        
-        // 加入高強度的體積脈衝變化 (Pulse)：大小從 0.3 倍暴增到 2.7 倍！
-        const scaleBase = 1.5 + Math.sin(speed * 2.5) * 1.2;
-        stretchOrb.scale.setScalar(Math.max(0.3, scaleBase));
+        stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, -30);
+        stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
       }
       
       if (mod === 'breathe' || mod === 'chaser') { particleSystem.rotation.y += 0.0005; particleSystem.rotation.z += 0.0002; }
@@ -455,13 +465,11 @@ export default function EyeComfortApp() {
       const state = gameState.current;
       if (state.module === 'DASHBOARD' || currentView === 'TEST_REPORT') return;
 
-      const requiresTracking = ['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(state.module);
-      const currentTrackState = trackingStateRef.current;
+      const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(state.module) || (state.module === 'sop' && state.phase === 'LOOKING');
       
-      // 確保 AI 載入中或視線遺失時，時間完全凍結
       if (requiresTracking) {
-        if (currentTrackState === 'INITIALIZING') return;
-        if (currentTrackState === 'LOST' && !state.isResting && state.phase !== 'COMPLETED') return;
+        if (state.aiStatus === 'INIT') return;
+        if (state.aiStatus === 'LOST' && !state.isResting && state.phase !== 'COMPLETED') return;
       }
 
       if (requiresTracking && state.isResting) {
@@ -521,7 +529,7 @@ export default function EyeComfortApp() {
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
   // ==========================================
-  // 視圖切換與按鈕處理 (修復同步問題)
+  // 視圖切換與按鈕處理
   // ==========================================
   const startTraining = (type: string) => {
     if (audioRef.current.ctx?.state === 'suspended') { audioRef.current.ctx.resume(); }
@@ -533,8 +541,7 @@ export default function EyeComfortApp() {
     if (noSleepRef.current) noSleepRef.current.enable();
 
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
-      // 在點擊的「第 0 毫秒」就強制宣告 AI 正在載入，避免計時器偷跑！
-      trackingStateRef.current = 'INITIALIZING';
+      gameState.current.aiStatus = 'INIT'; 
       setTrackingState('INITIALIZING');
       initEyeTracking(); 
     }
@@ -594,7 +601,7 @@ export default function EyeComfortApp() {
               <ModuleCard title="🌌 星雲散焦與神經放鬆" desc="【深度冥想】釋放隧道視覺，同步 3D 粒子星雲進行共振呼吸。" color="#FFD93D" onClick={() => showModuleIntro('breathe')} />
               <ModuleCard title="🎯 Z 軸遠近對焦飛梭" desc="高強度睫狀肌重訓！利用極端遠近切換，恢復眼球對焦彈性。" color="#FF3366" onClick={() => showModuleIntro('focus')} />
               <ModuleCard title="🔍 互動式黃斑部評估" desc="專利級數位化阿姆斯勒方格表，包含左右眼自適應風險運算。" color="#9D4EDD" onClick={() => startTraining('amsler')} />
-              <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛 ডিভাইস 散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => startTraining('astigmatism')} />
+              <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛在散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => startTraining('astigmatism')} />
             </div>
 
             <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02] mt-2">
@@ -781,7 +788,7 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 載入中全螢幕等待畫面 (完全凍結時間) */}
+          {/* 載入中全螢幕等待畫面 */}
           {trackingState === 'INITIALIZING' && (
             <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
               <div className="text-[60px] mb-4 animate-spin">⏳</div>
@@ -792,7 +799,7 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 失去追蹤的防呆紅屏警告 (優雅降級，幾乎零延遲觸發) */}
+          {/* 失去追蹤的防呆紅屏警告 */}
           {trackingState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">⚠️</div>

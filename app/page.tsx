@@ -47,7 +47,7 @@ interface DiagnosticData {
 
 export default function EyeComfortApp() {
   // ==========================================
-  // 4. React UI 狀態管理 (新增 INFO_RPE 視圖)
+  // 4. React UI 狀態管理
   // ==========================================
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
@@ -55,7 +55,6 @@ export default function EyeComfortApp() {
   const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: string, top: string, showContinue: boolean, showInput: boolean }>({ title: '', timer: '', top: '70%', showContinue: false, showInput: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
   
-  // 診斷測試結果暫存
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
 
   // ==========================================
@@ -284,7 +283,6 @@ export default function EyeComfortApp() {
         focusRing.material.color.setHex(focusColors[step]);
         focusRing.rotation.z = Math.floor(Math.random() * 4) * (Math.PI / 2);
       },
-      // 解決返回大廳的殘留 Bug：加入強制隱藏所有 3D 群組的邏輯
       stop: () => {
         allModules.forEach(m => m.visible = false);
         stimulusBalls.forEach(b => { if(b.parent) b.parent.remove(b); b.geometry.dispose(); b.material.dispose(); });
@@ -471,7 +469,7 @@ export default function EyeComfortApp() {
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
   // ==========================================
-  // 8. 視圖切換與按鈕處理 (啟動 NoSleep)
+  // 8. 視圖切換與按鈕處理
   // ==========================================
   const startTraining = (type: string) => {
     setActiveModule(type); setCurrentView('TRAINING');
@@ -493,7 +491,6 @@ export default function EyeComfortApp() {
   const returnToDashboard = () => {
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module)) stopBGM();
     gameState.current.module = 'DASHBOARD'; 
-    // 呼叫新加入的 stop 方法，徹底清除所有 3D 物件的殘留
     engineRef.current?.stop();
     if (noSleepRef.current) { noSleepRef.current.disable(); }
     setCurrentView('DASHBOARD'); setActiveModule(null);
@@ -508,7 +505,7 @@ export default function EyeComfortApp() {
     <div className="relative w-screen h-screen overflow-hidden bg-[#0f141e] font-sans">
       <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
 
-      {/* 視圖 1: 大廳 (DASHBOARD) - 調整了按鈕排序 */}
+      {/* 視圖 1: 大廳 (DASHBOARD) */}
       {currentView === 'DASHBOARD' && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-start py-10 px-5 overflow-y-auto box-border">
           <h1 className="text-[#fffdd0] text-[32px] text-center mb-[15px] tracking-[1px]"><div className="text-[55px] mb-[10px]">👁️</div>數位眼科與視覺復健中心</h1>
@@ -518,7 +515,6 @@ export default function EyeComfortApp() {
             )}
           </p>
           <div className="w-full max-w-[800px] flex flex-col gap-5 mb-[40px]">
-            
             <div onClick={() => setCurrentView('INFO_MODULES')} className="w-full bg-[#1a2233] border-2 border-[#E5B55E] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(229,181,94,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
               <h3 className="text-[#E5B55E] text-[22px] mb-2 font-bold">📖 數位復健模組與醫學學理說明</h3>
               <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解本中心五大訓練模組之設計原理與學術文獻探討</p>
@@ -539,12 +535,10 @@ export default function EyeComfortApp() {
               <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛在散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => startTraining('astigmatism')} />
             </div>
 
-            {/* 將旗艦護眼營養百科移至最下方 */}
             <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02] mt-2">
               <h3 className="text-[#00ffcc] text-[22px] mb-2 font-bold">🔬 旗艦護眼營養百科</h3>
               <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解針對不同眼睛部位結構的專屬營養配方解析</p>
             </div>
-
           </div>
         </div>
       )}
@@ -558,34 +552,83 @@ export default function EyeComfortApp() {
             
             <div className="mb-6 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d] shadow-[0_0_10px_rgba(255,77,77,0.2)]">
               <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-3 flex items-center gap-2"><span>⚠️</span> 醫療法規與免責聲明</h3>
-              <p className="text-[#d1b0b0] text-[16px] leading-[1.8] m-0">本頁面提供之營養素資訊僅供日常生理保健與學理參考，<strong>不代表任何產品具備診斷、治療或預防眼科疾病之療效</strong>。若您有眼部不適，請務必尋求專業眼科醫師之檢查與處方。</p>
+              <p className="text-[#d1b0b0] text-[16px] leading-[1.8] m-0">本頁面提供之營養素資訊僅供日常生理保健與學理參考，<strong>不代表任何產品具備診斷、治療或預防眼科疾病之療效</strong>。營養素通常是維持組織正常功能或降低缺乏風險，不能取代眼科檢查與治療。</p>
             </div>
 
-            <p className="text-[#8b9bb4] text-[18px] leading-[1.6] mb-5 bg-[#162b2b] p-4 rounded-lg"><strong className="text-[#00ffcc]">閱讀重點｜</strong>眼睛是非常精密的器官，不同的解剖構造需要對應不同的關鍵營養素。單一成分無法顧及全眼健康，以下為具備醫學學理支持的營養素對應表：</p>
+            <p className="text-[#8b9bb4] text-[17px] leading-[1.6] mb-5 bg-[#162b2b] p-4 rounded-lg"><strong className="text-[#00ffcc]">閱讀重點｜</strong>眼睛是非常精密的器官，不同的解剖構造需要對應不同的關鍵營養素。單一成分無法顧及全眼健康，以下為具備醫學學理支持的營養素對應表：</p>
             
-            {/* 新增 RPE 詳細說明入口按鈕 */}
             <button onClick={() => setCurrentView('INFO_RPE')} className="w-full py-4 mb-6 bg-[#2B579A] text-white border-none rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(43,87,154,0.4)] transition-transform hover:scale-[1.02]">
               👉 深度解析：為什麼視網膜色素上皮 (RPE) 很重要？
             </button>
 
             <div className="overflow-x-auto mb-[30px] rounded-lg shadow-lg">
-              <table className="w-full border-collapse text-[#fffdd0] text-[17px] leading-[1.6]">
+              <table className="w-full min-w-[600px] border-collapse text-[#fffdd0] text-[15px] leading-[1.6]">
                 <thead>
-                  <tr className="bg-[#1a2233] text-left"><th className="p-3.5 border border-[#2a3a5a]">關鍵營養素</th><th className="p-3.5 border border-[#2a3a5a]">主要作用部位</th><th className="p-3.5 border border-[#2a3a5a]">學理與功能性參考</th></tr>
+                  <tr className="bg-[#1a2233] text-left">
+                    <th className="p-3 border border-[#2a3a5a] w-[25%]">關鍵營養素</th>
+                    <th className="p-3 border border-[#2a3a5a] w-[25%]">主要作用部位</th>
+                    <th className="p-3 border border-[#2a3a5a] w-[50%]">學理與功能性參考</th>
+                  </tr>
                 </thead>
                 <tbody>
-                  <tr className="bg-[#121824]"><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">葉黃素、玉米黃素</td><td className="p-3.5 border border-[#2a3a5a]">視網膜黃斑部</td><td className="p-3.5 border border-[#2a3a5a]">構成黃斑色素，吸收藍光並抗氧化，主要對應黃斑部的日常保養。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">神經滋養物質 (如 Propolins)</td><td className="p-3.5 border border-[#2a3a5a]">視網膜色素上皮 (RPE)</td><td className="p-3.5 border border-[#2a3a5a]">細胞與動物實驗指出，可輔助提升 RPE 存活率，幫助代謝視覺廢物，提供深層保護。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素A／β-胡蘿蔔素</td><td className="p-3.5 border border-[#2a3a5a]">視網膜桿狀細胞、角膜</td><td className="p-3.5 border border-[#2a3a5a]">維持眼表上皮細胞健康；與暗處視覺（夜間視力）息息相關。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">DHA & 高濃度 Omega-3</td><td className="p-3.5 border border-[#2a3a5a]">感光細胞膜、眼表淚膜</td><td className="p-3.5 border border-[#2a3a5a]">維持細胞膜流動性；並能協助穩定淚液中的油脂層，輔助舒緩乾眼感受。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3.5 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素 B 群 (B1, B12)</td><td className="p-3.5 border border-[#2a3a5a]">視神經傳導路徑</td><td className="p-3.5 border border-[#2a3a5a]">支持神經系統正常運作，缺乏時可能引發營養性視神經病變。</td></tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">葉黃素、玉米黃素</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜黃斑部、中央凹</td>
+                    <td className="p-3 border border-[#2a3a5a]">構成黃斑色素，與中央視力、辨色及對比敏感度有關；是最直接對應黃斑部的營養素。</td>
+                  </tr>
+                  <tr className="bg-[#162b2b]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Propolins<br/>(尤其 Propolin G)</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜色素上皮 (RPE)；黃斑部外層</td>
+                    <td className="p-3 border border-[#2a3a5a]">細胞實驗顯示可提高氧化或缺氧損傷下的存活；動物模型中顯示 RPE 功能改善。目前屬細胞與動物前臨床證據。</td>
+                  </tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素A、β-胡蘿蔔素</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜桿狀細胞；角膜、結膜</td>
+                    <td className="p-3 border border-[#2a3a5a]">參與視紫質形成並維持眼表上皮；缺乏時可能導致乾眼與角膜損傷。</td>
+                  </tr>
+                  <tr className="bg-[#162b2b]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">DHA</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜感光細胞</td>
+                    <td className="p-3 border border-[#2a3a5a]">感光細胞膜的重要結構成分，在視網膜含量很高。</td>
+                  </tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Omega-3<br/>(EPA、DHA)</td>
+                    <td className="p-3 border border-[#2a3a5a]">淚膜、瞼板腺、眼表</td>
+                    <td className="p-3 border border-[#2a3a5a]">可能影響發炎與淚膜油脂層；但大型研究中對中重度乾眼的改善未顯著優於安慰劑。</td>
+                  </tr>
+                  <tr className="bg-[#162b2b]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素C、維生素E</td>
+                    <td className="p-3 border border-[#2a3a5a]">水晶體、視網膜</td>
+                    <td className="p-3 border border-[#2a3a5a]">屬抗氧化營養素；與其他成分組成 AREDS2 時可延緩特定 AMD 惡化。</td>
+                  </tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">鋅 (Zinc)</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜、黃斑部</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜含有較高濃度的鋅；在完整 AREDS2 配方中，可協助延緩特定程度 AMD 惡化。</td>
+                  </tr>
+                  <tr className="bg-[#162b2b]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">銅 (Copper)</td>
+                    <td className="p-3 border border-[#2a3a5a]">無特定單一結構</td>
+                    <td className="p-3 border border-[#2a3a5a]">加入配方主要目的是防止長期高劑量鋅造成銅缺乏。</td>
+                  </tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素 B1、B12、葉酸</td>
+                    <td className="p-3 border border-[#2a3a5a]">視神經</td>
+                    <td className="p-3 border border-[#2a3a5a]">嚴重缺乏可能造成營養性視神經病變；主要作用是避免缺乏以維持神經傳導。</td>
+                  </tr>
                 </tbody>
               </table>
             </div>
-            
-            <div className="bg-[#2a1f1a] p-5 rounded-lg border border-[#e5b55e]">
-              <h3 className="text-[#e5b55e] text-[20px] font-bold mb-3">💡 綜合保養建議</h3>
-              <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0">在挑選護眼營養配方時，建議尋求具備多重機轉（如同時涵蓋黃斑部抗氧化、RPE 細胞滋養、淚膜穩定）的複方設計，並配合本中心的數位眼肌放鬆模組，達到內外兼修的保養效果。</p>
+
+            <div className="bg-[#2a1f1a] p-5 rounded-lg border border-[#e5b55e] mb-6">
+              <h3 className="text-[#e5b55e] text-[18px] font-bold mb-3">📚 主要資料來源</h3>
+              <ul className="text-[#a5b6cf] text-[14px] leading-[1.6] pl-5 m-0 space-y-1">
+                <li>中華民國發明專利第I5105744號〈用於治療眼疾的化合物〉</li>
+                <li>台灣綠蜂膠萃取物眼疾專利</li>
+                <li>美國國家眼科研究所 (NEI): AREDS / AREDS2 及 DREAM 乾眼研究</li>
+                <li>NIH 膳食補充品辦公室: 維生素A、Omega-3、鋅</li>
+                <li>Merck Manual: 營養性與毒性視神經病變</li>
+              </ul>
             </div>
           </div>
         </div>
@@ -599,19 +642,25 @@ export default function EyeComfortApp() {
             <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#2B579A] pb-2.5 mb-[20px] font-bold">🧬 為什麼視網膜色素上皮 (RPE) 很重要？</h2>
             
             <div className="bg-[#161b22] p-6 rounded-xl border-l-4 border-[#E5B55E] mb-6">
-              <h3 className="text-[#E5B55E] text-[22px] font-bold mb-3">👁️ 眼睛的專屬垃圾處理廠</h3>
-              <p className="text-[#fffdd0] text-[17px] leading-[1.8] m-0">
-                視網膜色素上皮細胞（RPE）是視網膜感光細胞的後勤部隊。感光細胞每天在感光的過程中會產生大量的「代謝廢物」。RPE 的重要任務就是像垃圾處理廠一樣，吞噬並分解這些廢物。<br/><br/>
-                如果 RPE 細胞因為老化、氧化壓力或缺氧而功能衰退，這些代謝廢物就會在視網膜底層不斷堆積，形成無法被代謝的<strong>「脂褐質 (Lipofuscin)」</strong>與隱結 (Drusen)，進而大幅增加黃斑部病變 (AMD) 的風險。
+              <h3 className="text-[#E5B55E] text-[22px] font-bold mb-3">👁️ 眼睛後勤樞紐與專屬垃圾處理廠</h3>
+              <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0 mb-4">
+                視網膜色素上皮細胞（RPE）緊貼著感光細胞，是維持視覺運作不可或缺的後勤防線。它具備以下五大關鍵生理功能：
               </p>
+              <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-3">
+                <li><strong className="text-[#fffdd0]">1. 運輸營養素：</strong>作為脈絡膜微血管與視網膜間的橋樑，將維生素、氧氣等營養素精準運送給感光細胞。</li>
+                <li><strong className="text-[#fffdd0]">2. 排除代謝廢物：</strong>感光細胞每天運作會產生大量代謝廢物，RPE 就像垃圾處理廠，負責吞噬並分解這些廢物。若 RPE 衰退，廢物將堆積形成無法代謝的<strong>「脂褐質 (Lipofuscin)」</strong>與隱結 (Drusen)。</li>
+                <li><strong className="text-[#fffdd0]">3. 分泌抗氧化因子：</strong>RPE 能分泌多種因子，維持眼內的抗氧化能力，保護脆弱的感光細胞免受強光與氧化壓力破壞。</li>
+                <li><strong className="text-[#fffdd0]">4. 穩定視網膜結構：</strong>作為血視網膜屏障（Blood-Retinal Barrier）的重要部分，維持視網膜與脈絡膜界面的組織結構穩固。</li>
+                <li><strong className="text-[#fffdd0]">5. 預防黃斑部病變：</strong>維持 RPE 的健康活力，能有效避免脂褐質堆積引發的發炎反應，是延緩老化、降低黃斑部病變 (AMD) 發生風險的核心機制。</li>
+              </ul>
             </div>
 
             <div className="bg-[#162b2b] p-6 rounded-xl border-l-4 border-[#00ffcc] mb-6">
               <h3 className="text-[#00ffcc] text-[22px] font-bold mb-3">🔬 Propolins 在 RPE 的前臨床研究</h3>
-              <p className="text-[#fffdd0] text-[17px] leading-[1.8] mb-4">
-                根據相關眼疾專利與細胞動物研究，神經滋養物質 Propolins（特別是 Propolin G）最適合定位在作用於 RPE：
+              <p className="text-[#fffdd0] text-[16px] leading-[1.8] mb-4">
+                根據相關專利與研究，神經滋養物質 Propolins（特別是專利式(II) 對應之 Propolin G）最適合定位在作用於 RPE：
               </p>
-              <ul className="text-[#8b9bb4] text-[17px] leading-[1.8] pl-5 m-0 space-y-2">
+              <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-2">
                 <li><strong className="text-[#fffdd0]">細胞層級保護：</strong>在 ARPE-19 細胞實驗中，顯示能提高氧化或缺氧損傷下的細胞存活率。它的機制是提供受損細胞保護，而非無限制刺激健康細胞增生。</li>
                 <li><strong className="text-[#fffdd0]">動物實驗恢復：</strong>在 NaIO3 誘導的乾性 AMD 大鼠模型中，使用 1% 專利滴眼液能讓 ERG c-wave 回升約 4 倍，顯示 RPE 功能獲得部分顯著恢復。</li>
               </ul>
@@ -619,8 +668,15 @@ export default function EyeComfortApp() {
 
             <div className="mb-6 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d]">
               <h3 className="text-[#ff4d4d] text-[18px] font-bold mb-2">⚠️ 證據界線與使用提醒</h3>
-              <p className="text-[#d1b0b0] text-[15px] leading-[1.8] m-0">
-                上述結果為細胞與動物的前臨床試驗證據（且動物採用滴眼途徑）。因此，不能直接換算成市售口服保健品的人體有效劑量，亦不能據此宣稱能預防或治療人體黃斑部病變 (AMD)。市售口服蜂膠膠囊並非無菌眼藥水，絕不可自行滴入眼睛。
+              <p className="text-[#d1b0b0] text-[14px] leading-[1.8] m-0">
+                上述結果為細胞與動物的前臨床試驗證據。因此，不能直接換算成市售口服保健品的人體有效劑量，亦不能據此宣稱能預防或治療人體黃斑部病變 (AMD)。市售口服蜂膠膠囊並非無菌眼藥水，絕不可自行滴入眼睛。
+              </p>
+            </div>
+            
+            <div className="bg-[#2a1f1a] p-4 rounded-lg border border-[#e5b55e]">
+              <h3 className="text-[#e5b55e] text-[16px] font-bold mb-2">📚 主要資料來源</h3>
+              <p className="text-[#a5b6cf] text-[13px] leading-[1.6] m-0">
+                中華民國發明專利第I5105744號〈用於治療眼疾的化合物〉；台灣綠蜂膠萃取物眼疾專利。
               </p>
             </div>
           </div>
@@ -768,7 +824,6 @@ export default function EyeComfortApp() {
                   : "系統運算警告：偵測到潛在的視覺扭曲或模糊異常。這可能是黃斑部或散光軸向的疲勞警訊，強烈建議您盡速尋求專業眼科醫師的精密儀器檢查！"}
               </p>
             </div>
-            {/* 返回大廳按鈕同樣會觸發 clear 邏輯 */}
             <button onClick={returnToDashboard} className="w-full py-4 bg-[#9D4EDD] text-white rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(157,78,221,0.5)]">完成並返回大廳</button>
           </div>
         </div>

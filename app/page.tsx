@@ -91,28 +91,23 @@ export default function EyeComfortApp() {
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
         }
 
-        // 專利級核心：讀取眼球向量與閉眼向量 (Blendshapes)
+        // 專利級核心：讀取眼球向量與閉眼向量 (加入 explicitly type s: any 解決編譯錯誤)
         if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
           const shapes = results.faceBlendshapes[0].categories;
           
-          // 8 個方向的眼球向量
-          const lookShapes = shapes.filter(s => 
+          const lookShapes = shapes.filter((s: any) => 
             ['eyeLookInLeft', 'eyeLookOutLeft', 'eyeLookUpLeft', 'eyeLookDownLeft',
              'eyeLookInRight', 'eyeLookOutRight', 'eyeLookUpRight', 'eyeLookDownRight'].includes(s.categoryName)
           );
           
-          const blinkShapes = shapes.filter(s => ['eyeBlinkLeft', 'eyeBlinkRight'].includes(s.categoryName));
+          const blinkShapes = shapes.filter((s: any) => ['eyeBlinkLeft', 'eyeBlinkRight'].includes(s.categoryName));
 
-          // 閾值 0.65：只要有一眼明顯看向別處，即判定視線遺失
-          if (lookShapes.some(s => s.score > 0.65)) isGazeLost = true;
-          // 閉眼防呆：避免訓練中途睡著作弊
-          if (blinkShapes.some(s => s.score > 0.6)) isEyesClosed = true;
+          if (lookShapes.some((s: any) => s.score > 0.65)) isGazeLost = true;
+          if (blinkShapes.some((s: any) => s.score > 0.6)) isEyesClosed = true;
         }
 
-        // 邏輯豁免：如果模組 1 正在「閉眼」階段，則允許閉眼與不看螢幕
         const isSopClosing = gameState.current.module === 'sop' && gameState.current.phase === 'CLOSING';
 
-        // 綜合判定：頭轉開、臉朝上/下、眼球沒看螢幕、閉著眼睛
         if (!isSopClosing && (results.faceLandmarks.length === 0 || yawRatio > 2.0 || pitchRatio > 2.0 || isGazeLost || isEyesClosed)) {
           lostFrames++;
         } else {
@@ -123,7 +118,6 @@ export default function EyeComfortApp() {
           }
         }
         
-        // 容錯率：3 frames (約 0.3秒)
         if (lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') {
           gameState.current.aiStatus = 'LOST';
           setTrackingState('LOST');
@@ -145,7 +139,7 @@ export default function EyeComfortApp() {
       if (!faceLandmarkerRef.current) {
         faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: { modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task", delegate: "GPU" },
-          outputFaceBlendshapes: true, // 核心升級：強制開啟 8 向眼球向量輸出
+          outputFaceBlendshapes: true, 
           runningMode: "VIDEO", numFaces: 1
         });
       }
@@ -263,7 +257,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (完美還原平滑軌跡版)
+  // Three.js 引擎與動畫
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -305,12 +299,12 @@ export default function EyeComfortApp() {
     for (let i = 0; i < 12; i++) { const line = new THREE.Mesh(new THREE.PlaneGeometry(25, 0.3), new THREE.MeshBasicMaterial({ color: 0xffffff })); line.rotation.z = (i * Math.PI) / 12; astigGroup.add(line); }
     const astigCenterDot = new THREE.Mesh(new THREE.CircleGeometry(0.8, 32), new THREE.MeshBasicMaterial({ color: 0xff3333 })); astigCenterDot.position.z = 0.1; astigGroup.add(astigCenterDot); astigGroup.position.z = -25; scene.add(astigGroup);
 
-    const allModules = [sopGroup, stretchGroup, chaserGroup, breatheGroup, focusGroup, amslerGroup, astigGroup]; allModules.forEach(m => m.visible = false);
+    const allModules = [sopGroup, stretchGroup, chaserGroup, breatheGroup, focusGroup, amslerGroup, astigGroup]; allModules.forEach((m: any) => m.visible = false);
     const stimulusBalls: any[] = [];
 
     engineRef.current = {
       start: (mod: string) => {
-        allModules.forEach(m => m.visible = false);
+        allModules.forEach((m: any) => m.visible = false);
         if (mod === 'sop') { sopGroup.visible = true; sopMat.opacity = 1; coreMat.opacity = 1; }
         if (mod === 'stretch') { stretchGroup.visible = true; stretchOrb.position.set(0,0,-30); }
         if (mod === 'chaser') { chaserGroup.visible = true; breatheGroup.visible = true; chaserOrb.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -10); chaserOrb.scale.setScalar(1); chaserOrb.material.opacity = 1; }
@@ -324,7 +318,7 @@ export default function EyeComfortApp() {
         ball.position.set((Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15, -70); sopGroup.add(ball); stimulusBalls.push(ball);
       },
       updateFocusRing: (step: number) => { focusRing.material.color.setHex(focusColors[step]); focusRing.rotation.z = Math.floor(Math.random() * 4) * (Math.PI / 2); },
-      stop: () => { allModules.forEach(m => m.visible = false); stimulusBalls.forEach(b => { if(b.parent) b.parent.remove(b); b.geometry.dispose(); b.material.dispose(); }); stimulusBalls.length = 0; }
+      stop: () => { allModules.forEach((m: any) => m.visible = false); stimulusBalls.forEach((b: any) => { if(b.parent) b.parent.remove(b); b.geometry.dispose(); b.material.dispose(); }); stimulusBalls.length = 0; }
     };
 
     let animationFrameId: number;
@@ -336,10 +330,7 @@ export default function EyeComfortApp() {
       if (mod === 'DASHBOARD') { renderer.render(new THREE.Scene(), camera); return; }
 
       const now = performance.now();
-      
-      // 修復邏輯豁免：模組1 閉眼階段不凍結動畫
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(mod) || (mod === 'sop' && gameState.current.phase === 'LOOKING');
-      
       const currentAiStatus = gameState.current.aiStatus;
       
       if (requiresTracking && (currentAiStatus === 'INIT' || (currentAiStatus === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED'))) { 
@@ -366,7 +357,6 @@ export default function EyeComfortApp() {
         }
       }
       
-      // ===== 核心優化：還原 Mod 2 溫和伸展，保留精準 1/3 邊緣 =====
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
         const speed = timeDelta * 0.8; 
         
@@ -378,7 +368,7 @@ export default function EyeComfortApp() {
         const edgeX = visibleWidth / 2;
         const edgeY = visibleHeight / 2;
         
-        const ampX = edgeX - 0.5; // 只切出 1/3 的球體
+        const ampX = edgeX - 0.5; 
         const ampY = Math.min(edgeY * 0.6, 12); 
         
         stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, -30);
@@ -612,7 +602,7 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 (折疊以省版面) */}
+      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 */}
       {currentView === 'INFO_NUTRIENT' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">

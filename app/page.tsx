@@ -147,7 +147,7 @@ export default function EyeComfortApp() {
           setTrackingState('LOST');
         }
       }
-      trackingLoopRef.current = setTimeout(() => { requestAnimationFrame(track); }, 100);
+      trackingLoopRef.current = setTimeout(() => { requestAnimationFrame(track); }, 200);
     };
     track();
   }, []);
@@ -813,7 +813,7 @@ export default function EyeComfortApp() {
 
     if (noSleepRef.current) noSleepRef.current.enable();
 
-    if (['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(type)) {
+    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
       gameState.current.aiStatus = 'INIT'; 
       setTrackingState('INITIALIZING');
       initEyeTracking(); 
@@ -1062,7 +1062,7 @@ export default function EyeComfortApp() {
           <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
           
           {/* AI 畫中畫校正窗 (PIP) */}
-          {['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(gameState.current.module) && (
+          {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
             <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none">
               <video ref={videoRef} className="w-full h-full object-cover transform scale-x-[-1]" playsInline muted autoPlay />
             </div>

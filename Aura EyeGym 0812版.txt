@@ -36,139 +36,71 @@ const medicalPrinciples: Record<string, any> = {
   focus: { icon: "🎯", title: "Z 軸遠近對焦飛梭", color: "#FF3366", principle: "這是一款「睫狀肌的幫浦活動」。利用 Three.js 的 Z 軸深度與透視，引導睫狀肌進行看近與看遠的交替活動，作為日常維持調節靈活度的輔助練習。<br><br><strong style='color:#00ffcc;'>⏱️ 訓練時間：單眼各 60 秒，共需 2 分鐘。</strong><br><br><strong style='color:#FF3366;'>⚠️ 這是較高強度的眼球活動模組，如有不適請立即停止並讓眼睛休息。</strong>" }
 };
 
+// ==========================================
+// 3. 專利級別：邏輯判斷系統資料結構
+// ==========================================
 type TestResult = 'NORMAL' | 'ABNORMAL' | null;
-interface DiagnosticData { leftEye: TestResult; rightEye: TestResult; }
+interface DiagnosticData {
+  leftEye: TestResult;
+  rightEye: TestResult;
+}
 
 export default function EyeComfortApp() {
+  // ==========================================
+  // 4. React UI 狀態管理
+  // ==========================================
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
   const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
   const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: string, top: string, showContinue: boolean, showInput: boolean }>({ title: '', timer: '', top: '70%', showContinue: false, showInput: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
+  
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
 
   // ==========================================
-  // 3. AI 視線追蹤核心狀態 (全新加入)
+  // 5. 遊戲核心狀態
   // ==========================================
-  const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION'>('IDLE');
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const faceLandmarkerRef = useRef<any>(null);
-  const trackingLoopRef = useRef<any>(null);
-  const isTrackingRef = useRef(false);
-
   const canvasRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<any>(null); 
   const audioRef = useRef<any>({ ctx: null, bgm: null, fadeInt: null, dipTimeout: null });
   const noSleepRef = useRef<any>(null);
   
   const gameState = useRef({
-    module: 'DASHBOARD', cycle: 1, phase: 'LOOKING', sopTimeLeft: 10, stretchTimeLeft: 45, chaserTimeLeft: 60, chaserScore: 0,
-    breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
-    testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
-    activeTimeAcc: 0 // 用於追蹤真正有在看的動畫時間
+    module: 'DASHBOARD',
+    cycle: 1, phase: 'LOOKING', sopTimeLeft: 10,
+    stretchTimeLeft: 45,
+    chaserTimeLeft: 60, chaserScore: 0,
+    breatheTimeLeft: 60, breathPhase: 'INHALE',
+    focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
+    testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15,
+    isResting: false, restTimeLeft: 0
   });
 
-  // ==========================================
-  // AI 追蹤方法宣告
-  // ==========================================
-  const startTrackingLoop = useCallback(() => {
-    let lostFrames = 0;
-    const track = () => {
-      if (!videoRef.current || !faceLandmarkerRef.current || gameState.current.module === 'DASHBOARD') return;
-      const startTimeMs = performance.now();
-      
-      if (videoRef.current.readyState >= 2) {
-        const results = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
-        if (results.faceLandmarks && results.faceLandmarks.length > 0) {
-          isTrackingRef.current = true;
-          setTrackingState('TRACKING');
-          lostFrames = 0;
-        } else {
-          lostFrames++;
-          // 容錯率：大約 1.5 秒抓不到 (15 frames @ 10fps)，就判定丟失
-          if (lostFrames > 15) {
-            isTrackingRef.current = false;
-            setTrackingState('LOST');
-          }
-        }
-      }
-      trackingLoopRef.current = setTimeout(track, 100); // 降頻：每秒只算 10 次，防止發燙
-    };
-    track();
-  }, []);
-
-  const initEyeTracking = useCallback(async () => {
-    setTrackingState('INITIALIZING');
-    try {
-      const { FaceLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
-      const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm");
-      
-      if (!faceLandmarkerRef.current) {
-        faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: {
-            modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            delegate: "GPU" // 強制使用 GPU 加速
-          },
-          outputFaceBlendshapes: false,
-          runningMode: "VIDEO",
-          numFaces: 1
-        });
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240, facingMode: 'user' } });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-        videoRef.current.onloadeddata = () => {
-          startTrackingLoop();
-        };
-      }
-    } catch (err) {
-      console.error("相機存取失敗", err);
-      setTrackingState('NO_PERMISSION');
-      // 如果拒絕權限，我們仍允許盲測運行 (退回無 AI 模式)
-      isTrackingRef.current = true; 
-    }
-  }, [startTrackingLoop]);
-
-  const stopEyeTracking = useCallback(() => {
-    clearTimeout(trackingLoopRef.current);
-    if (videoRef.current && videoRef.current.srcObject) {
-      (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
-      videoRef.current.srcObject = null;
-    }
-    isTrackingRef.current = false;
-    setTrackingState('IDLE');
-  }, []);
-
-  // 組件卸載時清除相機
-  useEffect(() => {
-    return () => { stopEyeTracking(); };
-  }, [stopEyeTracking]);
-
-
-  // ==========================================
-  // 其他基礎設定
-  // ==========================================
   useEffect(() => {
     let NoSleepModule: any;
-    import('nosleep.js').then((module) => { NoSleepModule = module.default; noSleepRef.current = new NoSleepModule(); }).catch(err => console.error(err));
+    import('nosleep.js').then((module) => {
+      NoSleepModule = module.default;
+      noSleepRef.current = new NoSleepModule();
+    }).catch(err => console.error(err));
     return () => { if (noSleepRef.current) noSleepRef.current.disable(); };
   }, []);
 
   useEffect(() => {
     const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
     audioRef.current.ctx = new AudioContext();
-    audioRef.current.bgm = new Audio(); audioRef.current.bgm.loop = true;
+    audioRef.current.bgm = new Audio();
+    audioRef.current.bgm.loop = true;
     const enableAudio = () => { if (audioRef.current.ctx?.state === 'suspended') audioRef.current.ctx.resume(); };
     window.addEventListener('click', enableAudio, { once: true });
     return () => window.removeEventListener('click', enableAudio);
   }, []);
 
   const playDingSound = useCallback(() => {
-    const ctx = audioRef.current.ctx; if (!ctx) return;
+    const ctx = audioRef.current.ctx;
+    if (!ctx) return;
     if (ctx.state === 'suspended') ctx.resume();
-    const osc = ctx.createOscillator(); const gain = ctx.createGain();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
     osc.type = 'sine'; osc.frequency.setValueAtTime(600, ctx.currentTime);
     gain.gain.setValueAtTime(1, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.5);
     osc.connect(gain); gain.connect(ctx.destination);
@@ -180,28 +112,56 @@ export default function EyeComfortApp() {
     clearInterval(audioRef.current.fadeInt); clearTimeout(audioRef.current.dipTimeout);
     bgm.src = src; bgm.volume = 0;
     const playPromise = bgm.play();
-    if (playPromise !== undefined) playPromise.then(() => { let vol = 0; audioRef.current.fadeInt = setInterval(() => { if (vol < 0.6) { vol += 0.05; bgm.volume = Math.min(vol, 0.6); } else clearInterval(audioRef.current.fadeInt); }, 100); }).catch(() => {});
+    if (playPromise !== undefined) {
+      playPromise.then(() => {
+        let vol = 0;
+        audioRef.current.fadeInt = setInterval(() => {
+          if (vol < 0.6) { vol += 0.05; bgm.volume = Math.min(vol, 0.6); } else clearInterval(audioRef.current.fadeInt);
+        }, 100);
+      }).catch(() => {});
+    }
   }, []);
 
   const stopBGM = useCallback(() => {
     const { bgm } = audioRef.current; if (!bgm) return;
     clearInterval(audioRef.current.fadeInt); clearTimeout(audioRef.current.dipTimeout);
-    let vol = bgm.volume; audioRef.current.fadeInt = setInterval(() => { if (vol > 0.05) { vol -= 0.1; bgm.volume = Math.max(vol, 0); } else { clearInterval(audioRef.current.fadeInt); bgm.pause(); bgm.currentTime = 0; } }, 100);
+    let vol = bgm.volume;
+    audioRef.current.fadeInt = setInterval(() => {
+      if (vol > 0.05) { vol -= 0.1; bgm.volume = Math.max(vol, 0); } 
+      else { clearInterval(audioRef.current.fadeInt); bgm.pause(); bgm.currentTime = 0; }
+    }, 100);
   }, []);
 
   const dipBGM = useCallback(() => {
     const { bgm } = audioRef.current; if (!bgm) return;
     clearInterval(audioRef.current.fadeInt); clearTimeout(audioRef.current.dipTimeout);
-    let vol = bgm.volume; audioRef.current.fadeInt = setInterval(() => { if (vol > 0.15) { vol -= 0.05; bgm.volume = Math.max(vol, 0.15); } else { clearInterval(audioRef.current.fadeInt); audioRef.current.dipTimeout = setTimeout(() => { audioRef.current.fadeInt = setInterval(() => { if (vol < 0.6) { vol += 0.05; bgm.volume = Math.min(vol, 0.6); } else clearInterval(audioRef.current.fadeInt); }, 100); }, 3500); } }, 100);
+    let vol = bgm.volume;
+    audioRef.current.fadeInt = setInterval(() => {
+      if (vol > 0.15) { vol -= 0.05; bgm.volume = Math.max(vol, 0.15); } 
+      else {
+        clearInterval(audioRef.current.fadeInt);
+        audioRef.current.dipTimeout = setTimeout(() => {
+          audioRef.current.fadeInt = setInterval(() => {
+            if (vol < 0.6) { vol += 0.05; bgm.volume = Math.min(vol, 0.6); } else clearInterval(audioRef.current.fadeInt);
+          }, 100);
+        }, 3500);
+      }
+    }, 100);
   }, []);
 
-  const logTraining = async (moduleName: string, durationSec: number) => { if (!lineProfile.uid || lineProfile.uid === '未登入') return; try { await supabase.from('training_logs').insert([{ line_uid: lineProfile.uid, module_name: moduleName, duration: durationSec }]); } catch (err) {} };
+  const logTraining = async (moduleName: string, durationSec: number) => {
+    if (!lineProfile.uid || lineProfile.uid === '未登入') return;
+    try { await supabase.from('training_logs').insert([{ line_uid: lineProfile.uid, module_name: moduleName, duration: durationSec }]); } catch (err) {}
+  };
+
   const getTodayString = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
   const recordModuleCompletion = (type: string) => {
     if (!['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(type)) return;
-    const today = getTodayString(); const modulesKey = `rehab_modules_${today}`; const cyclesKey = `rehab_cycles_${today}`;
-    let modulesDone = JSON.parse(localStorage.getItem(modulesKey) || '[]'); let cycles = parseInt(localStorage.getItem(cyclesKey) || '0', 10);
+    const today = getTodayString();
+    const modulesKey = `rehab_modules_${today}`; const cyclesKey = `rehab_cycles_${today}`;
+    let modulesDone = JSON.parse(localStorage.getItem(modulesKey) || '[]');
+    let cycles = parseInt(localStorage.getItem(cyclesKey) || '0', 10);
     if (!modulesDone.includes(type)) modulesDone.push(type);
     if (modulesDone.length >= 4) { cycles++; localStorage.setItem(cyclesKey, cycles.toString()); localStorage.setItem(modulesKey, JSON.stringify([])); } 
     else { localStorage.setItem(modulesKey, JSON.stringify(modulesDone)); }
@@ -227,31 +187,42 @@ export default function EyeComfortApp() {
     const name = lineProfile.name || '我';
     if (liff.isApiAvailable('shareTargetPicker')) {
       liff.shareTargetPicker([{
-        type: "text", text: `👁️ Aura EyeGym 視覺復健打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配醫師推薦營養配方，補充眼睛關鍵營養！\n👉 https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID || '2011063080-EDRCTHXv'}`
-      }]).catch((e) => alert("分享發生錯誤。"));
+        type: "text",
+        text: `👁️ Aura EyeGym 視覺復健打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配醫師推薦營養配方，補充眼睛關鍵營養！\n👉 https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID || '2011063080-EDRCTHXv'}`
+      }]).then((res) => { if (res) console.log("Shared"); }).catch((e) => alert("分享發生錯誤。"));
     }
   };
 
   useEffect(() => {
-    const initLiff = async () => { try { await liff.init({ liffId: process.env.NEXT_PUBLIC_LIFF_ID || '' }); if (liff.isLoggedIn()) { const profile = await liff.getProfile(); setLineProfile({ uid: profile.userId, name: profile.displayName }); } } catch (err) {} };
+    const initLiff = async () => {
+      try {
+        await liff.init({ liffId: process.env.NEXT_PUBLIC_LIFF_ID || '' });
+        if (liff.isLoggedIn()) { const profile = await liff.getProfile(); setLineProfile({ uid: profile.userId, name: profile.displayName }); }
+      } catch (err) {}
+    };
     initLiff(); loadCalendarData();
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (結合 AI 凍結邏輯)
+  // 6. Three.js 引擎初始化
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
-    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0f141e);
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000); camera.position.z = 5;
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); renderer.setSize(window.innerWidth, window.innerHeight);
-    canvasRef.current.appendChild(renderer.domElement); scene.add(new THREE.AmbientLight(0xfffdd0, 0.6));
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0f141e);
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.z = 5;
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    canvasRef.current.appendChild(renderer.domElement);
+    scene.add(new THREE.AmbientLight(0xfffdd0, 0.6));
 
     const sopGroup = new THREE.Group(); sopGroup.position.y = 12;
     const sopMat = new THREE.MeshStandardMaterial({ color: 0x6b8e23, emissive: 0x2e4b1c, wireframe: true, transparent: true });
     const focusTarget = new THREE.Mesh(new THREE.SphereGeometry(8, 32, 32), sopMat);
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true });
-    focusTarget.add(new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 16), coreMat)); sopGroup.add(focusTarget); scene.add(sopGroup);
+    focusTarget.add(new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 16), coreMat));
+    sopGroup.add(focusTarget); scene.add(sopGroup);
 
     const stretchGroup = new THREE.Group();
     const stretchOrb = new THREE.Mesh(new THREE.SphereGeometry(1.5, 32, 32), new THREE.MeshBasicMaterial({ color: 0xff9900 }));
@@ -262,25 +233,34 @@ export default function EyeComfortApp() {
     chaserOrb.add(new THREE.PointLight(0xffd700, 2.5, 80)); chaserGroup.add(chaserOrb); scene.add(chaserGroup);
 
     const breatheGroup = new THREE.Group();
-    const particleCount = 2000; const particlesGeo = new THREE.BufferGeometry(); const posArray = new Float32Array(particleCount * 3);
+    const particleCount = 2000; const particlesGeo = new THREE.BufferGeometry();
+    const posArray = new Float32Array(particleCount * 3);
     for(let i = 0; i < particleCount * 3; i++) posArray[i] = (Math.random() - 0.5) * 60;
     particlesGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
     const particlesMat = new THREE.PointsMaterial({ size: 0.15, color: 0x00ffcc, transparent: true, opacity: 0.8, blending: THREE.AdditiveBlending });
-    const particleSystem = new THREE.Points(particlesGeo, particlesMat); breatheGroup.add(particleSystem); breatheGroup.position.z = -20; scene.add(breatheGroup);
+    const particleSystem = new THREE.Points(particlesGeo, particlesMat);
+    breatheGroup.add(particleSystem); breatheGroup.position.z = -20; scene.add(breatheGroup);
 
     const focusGroup = new THREE.Group();
     const focusRing = new THREE.Mesh(new THREE.RingGeometry(1.2, 1.8, 32, 1, 0, Math.PI * 1.7), new THREE.MeshBasicMaterial({ color: 0xff3366, side: THREE.DoubleSide, transparent: true }));
     focusGroup.add(focusRing); scene.add(focusGroup);
 
     const amslerGroup = new THREE.Group();
-    const gridHelper = new THREE.GridHelper(30, 30, 0x557799, 0x445566); gridHelper.rotation.x = Math.PI / 2; gridHelper.position.z = -15; amslerGroup.add(gridHelper);
-    const centerDot = new THREE.Mesh(new THREE.CircleGeometry(0.3, 32), new THREE.MeshBasicMaterial({ color: 0xffffff })); centerDot.position.z = -14.9; amslerGroup.add(centerDot); scene.add(amslerGroup);
+    const gridHelper = new THREE.GridHelper(30, 30, 0x557799, 0x445566);
+    gridHelper.rotation.x = Math.PI / 2; gridHelper.position.z = -15; amslerGroup.add(gridHelper);
+    const centerDot = new THREE.Mesh(new THREE.CircleGeometry(0.3, 32), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+    centerDot.position.z = -14.9; amslerGroup.add(centerDot); scene.add(amslerGroup);
 
     const astigGroup = new THREE.Group();
-    for (let i = 0; i < 12; i++) { const line = new THREE.Mesh(new THREE.PlaneGeometry(25, 0.3), new THREE.MeshBasicMaterial({ color: 0xffffff })); line.rotation.z = (i * Math.PI) / 12; astigGroup.add(line); }
-    const astigCenterDot = new THREE.Mesh(new THREE.CircleGeometry(0.8, 32), new THREE.MeshBasicMaterial({ color: 0xff3333 })); astigCenterDot.position.z = 0.1; astigGroup.add(astigCenterDot); astigGroup.position.z = -25; scene.add(astigGroup);
+    for (let i = 0; i < 12; i++) {
+      const line = new THREE.Mesh(new THREE.PlaneGeometry(25, 0.3), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      line.rotation.z = (i * Math.PI) / 12; astigGroup.add(line);
+    }
+    const astigCenterDot = new THREE.Mesh(new THREE.CircleGeometry(0.8, 32), new THREE.MeshBasicMaterial({ color: 0xff3333 }));
+    astigCenterDot.position.z = 0.1; astigGroup.add(astigCenterDot); astigGroup.position.z = -25; scene.add(astigGroup);
 
-    const allModules = [sopGroup, stretchGroup, chaserGroup, breatheGroup, focusGroup, amslerGroup, astigGroup]; allModules.forEach(m => m.visible = false);
+    const allModules = [sopGroup, stretchGroup, chaserGroup, breatheGroup, focusGroup, amslerGroup, astigGroup];
+    allModules.forEach(m => m.visible = false);
     const stimulusBalls: any[] = [];
 
     engineRef.current = {
@@ -296,34 +276,26 @@ export default function EyeComfortApp() {
       },
       spawnBall: () => {
         const ball = new THREE.Mesh(new THREE.SphereGeometry(0.8, 32, 32), new THREE.MeshBasicMaterial({ color: 0xf5f5dc, transparent: true, opacity: 0.8, depthWrite: false }));
-        ball.position.set((Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15, -70); sopGroup.add(ball); stimulusBalls.push(ball);
+        ball.position.set((Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15, -70);
+        sopGroup.add(ball); stimulusBalls.push(ball);
       },
-      updateFocusRing: (step: number) => { focusRing.material.color.setHex(focusColors[step]); focusRing.rotation.z = Math.floor(Math.random() * 4) * (Math.PI / 2); },
-      stop: () => { allModules.forEach(m => m.visible = false); stimulusBalls.forEach(b => { if(b.parent) b.parent.remove(b); b.geometry.dispose(); b.material.dispose(); }); stimulusBalls.length = 0; }
+      updateFocusRing: (step: number) => {
+        focusRing.material.color.setHex(focusColors[step]);
+        focusRing.rotation.z = Math.floor(Math.random() * 4) * (Math.PI / 2);
+      },
+      stop: () => {
+        allModules.forEach(m => m.visible = false);
+        stimulusBalls.forEach(b => { if(b.parent) b.parent.remove(b); b.geometry.dispose(); b.material.dispose(); });
+        stimulusBalls.length = 0;
+      }
     };
 
     let animationFrameId: number;
-    let lastRenderTime = performance.now();
-
     const animate = () => {
       animationFrameId = requestAnimationFrame(animate);
       const mod = gameState.current.module;
       if (mod === 'DASHBOARD') { renderer.render(new THREE.Scene(), camera); return; }
-
-      const now = performance.now();
-      const delta = now - lastRenderTime;
-      lastRenderTime = now;
-
-      const requiresTracking = ['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(mod);
-      
-      // AI 專利防呆核心：如果需要追蹤，且現在沒有追蹤到，且不是休息時間，則「凍結動畫」
-      if (requiresTracking && !isTrackingRef.current && trackingState !== 'INITIALIZING' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED') {
-        renderer.render(scene, camera);
-        return; // 凍結
-      }
-
-      gameState.current.activeTimeAcc += delta;
-      const timeDelta = gameState.current.activeTimeAcc * 0.0012;
+      const time = Date.now(); const timeDelta = time * 0.0012;
       
       if (mod === 'sop' && gameState.current.phase !== 'COMPLETED') {
         focusTarget.rotation.x += 0.002; focusTarget.rotation.y += 0.003; focusTarget.position.z = -50;
@@ -338,7 +310,8 @@ export default function EyeComfortApp() {
         }
       }
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
-        const speed = timeDelta; stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1); const isMobile = window.innerWidth < 600;
+        const speed = timeDelta; stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
+        const isMobile = window.innerWidth < 600;
         stretchOrb.position.set(Math.sin(speed) * (isMobile ? 8.5 : 18), Math.sin(speed * 2) * (isMobile ? 12 : 8), -30 + Math.sin(speed * 0.5) * 20);
       }
       if (mod === 'breathe' || mod === 'chaser') { particleSystem.rotation.y += 0.0005; particleSystem.rotation.z += 0.0002; }
@@ -349,12 +322,14 @@ export default function EyeComfortApp() {
           chaserOrb.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -10); chaserOrb.scale.setScalar(1); chaserOrb.material.opacity = 1;
         } else {
           const progress = (chaserOrb.position.z + 10) / -110;
-          const currentScale = Math.max(0, 1 - progress * 0.9); chaserOrb.scale.setScalar(currentScale); chaserOrb.material.opacity = 1 - Math.pow(progress, 3);
+          const currentScale = Math.max(0, 1 - progress * 0.9); chaserOrb.scale.setScalar(currentScale);
+          chaserOrb.material.opacity = 1 - Math.pow(progress, 3);
         }
       }
       if (mod === 'breathe' && gameState.current.breatheTimeLeft > 0) {
-        const breathCycle = Math.sin((gameState.current.activeTimeAcc % 10000) / 10000 * Math.PI * 2);
-        const currentScale = 1.05 + breathCycle * 0.25; particleSystem.scale.setScalar(currentScale); particlesMat.color.setHSL(0.5 + breathCycle * 0.1, 0.8, 0.4 + breathCycle * 0.2);
+        const breathCycle = Math.sin((time % 10000) / 10000 * Math.PI * 2);
+        const currentScale = 1.05 + breathCycle * 0.25; particleSystem.scale.setScalar(currentScale);
+        particlesMat.color.setHSL(0.5 + breathCycle * 0.1, 0.8, 0.4 + breathCycle * 0.2);
       }
       if (mod === 'focus' && gameState.current.focusTimeLeft > 0) {
         focusGroup.position.z += (focusDepths[gameState.current.focusStep] - focusGroup.position.z) * 0.15;
@@ -365,10 +340,10 @@ export default function EyeComfortApp() {
     const handleResize = () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); };
     window.addEventListener('resize', handleResize);
     return () => { window.removeEventListener('resize', handleResize); cancelAnimationFrame(animationFrameId); if (canvasRef.current) canvasRef.current.removeChild(renderer.domElement); renderer.dispose(); };
-  }, [playDingSound, trackingState]);
+  }, [playDingSound]);
 
   // ==========================================
-  // 計時器邏輯 (結合 AI 凍結)
+  // 7. 狀態機與邏輯演算法處理
   // ==========================================
   const updateUI = useCallback(() => {
     const state = gameState.current;
@@ -394,7 +369,11 @@ export default function EyeComfortApp() {
       if (state.isWaitingForRightEye) setUiState({ top: '70%', title: <div className="text-center w-full text-[#00ffcc] mb-2">👁️ 左眼訓練完成！<br/>請換遮左眼，準備進行【右眼】重訓</div>, timer: '', showContinue: true, showInput: false });
       else if (state.focusTimeLeft > 0) {
         const eye = state.focusTimeLeft > 60 ? "👁️ 請遮住右眼，訓練【左眼】" : "👁️ 換遮左眼，訓練【右眼】";
-        setUiState({ top: '85%', title: <div className="w-full flex flex-col items-center justify-center text-center"><div className="text-[#00ffcc] mb-3">{eye}</div>{focusTexts[state.focusStep]}</div>, timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false, showInput: false });
+        setUiState({ 
+          top: '85%', 
+          title: <div className="w-full flex flex-col items-center justify-center text-center"><div className="text-[#00ffcc] mb-3">{eye}</div>{focusTexts[state.focusStep]}</div>, 
+          timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false, showInput: false 
+        });
       } else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
       else setUiState({ top: '50%', title: <div className="w-full text-center flex flex-col items-center">🎯 睫狀肌幫浦重訓完成！<br/><br/><span className="text-[18px] text-[#FFD93D]">⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br/>建議接著進行前四個眼睛放鬆模組。</span></div>, timer: '', showContinue: false, showInput: false });
     } else if (state.module === 'amsler' || state.module === 'astigmatism') {
@@ -411,8 +390,16 @@ export default function EyeComfortApp() {
 
   const handleDiagnosticInput = (result: TestResult) => {
     const state = gameState.current;
-    if (state.testPhase === 'LEFT_EYE_INPUT') { setTestResults(prev => ({ ...prev, leftEye: result })); state.testPhase = 'RIGHT_EYE_TEST'; state.testTimeLeft = 15; playDingSound(); } 
-    else if (state.testPhase === 'RIGHT_EYE_INPUT') { setTestResults(prev => ({ ...prev, rightEye: result })); playDingSound(); recordModuleCompletion(state.module); logTraining(state.module === 'amsler' ? '黃斑部數位評估' : '散光軸向數位評估', 30); setCurrentView('TEST_REPORT'); }
+    if (state.testPhase === 'LEFT_EYE_INPUT') {
+      setTestResults(prev => ({ ...prev, leftEye: result }));
+      state.testPhase = 'RIGHT_EYE_TEST'; state.testTimeLeft = 15; playDingSound();
+    } else if (state.testPhase === 'RIGHT_EYE_INPUT') {
+      setTestResults(prev => ({ ...prev, rightEye: result }));
+      playDingSound();
+      recordModuleCompletion(state.module);
+      logTraining(state.module === 'amsler' ? '黃斑部數位評估' : '散光軸向數位評估', 30);
+      setCurrentView('TEST_REPORT');
+    }
     updateUI();
   };
 
@@ -421,14 +408,7 @@ export default function EyeComfortApp() {
       const state = gameState.current;
       if (state.module === 'DASHBOARD' || currentView === 'TEST_REPORT') return;
 
-      const requiresTracking = ['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(state.module);
-      
-      // AI 專利防呆核心：如果失去視線，連倒數計時也一起凍結！
-      if (requiresTracking && !isTrackingRef.current && trackingState !== 'INITIALIZING' && !state.isResting && state.phase !== 'COMPLETED') {
-        return; // 凍結時間
-      }
-
-      if (requiresTracking && state.isResting) {
+      if (['stretch', 'chaser', 'breathe', 'focus'].includes(state.module) && state.isResting) {
         state.restTimeLeft--; if (state.restTimeLeft <= 0) { state.isResting = false; playDingSound(); }
         updateUI(); return;
       }
@@ -470,34 +450,33 @@ export default function EyeComfortApp() {
           state.focusStep += state.focusDirection;
           if (state.focusStep >= 3) { state.focusStep = 3; state.focusDirection = -1; }
           else if (state.focusStep <= 0) { state.focusStep = 0; state.focusDirection = 1; }
-          state.focusHoldTime = state.focusCycleSpeed; engineRef.current?.updateFocusRing(state.focusStep);
+          state.focusHoldTime = state.focusCycleSpeed;
+          engineRef.current?.updateFocusRing(state.focusStep);
         }
         if (state.focusTimeLeft <= 0) { state.isResting = true; state.restTimeLeft = 5; dipBGM(); playDingSound(); recordModuleCompletion('focus'); logTraining('Z 軸遠近對焦飛梭', 120); }
       } else if (state.module === 'amsler' || state.module === 'astigmatism') {
         if (state.testPhase === 'LEFT_EYE_TEST' || state.testPhase === 'RIGHT_EYE_TEST') {
           state.testTimeLeft--;
-          if (state.testTimeLeft <= 0) { state.testPhase = state.testPhase === 'LEFT_EYE_TEST' ? 'LEFT_EYE_INPUT' : 'RIGHT_EYE_INPUT'; playDingSound(); }
+          if (state.testTimeLeft <= 0) {
+            state.testPhase = state.testPhase === 'LEFT_EYE_TEST' ? 'LEFT_EYE_INPUT' : 'RIGHT_EYE_INPUT';
+            playDingSound();
+          }
         }
       }
       updateUI();
     }, 1000);
     return () => clearInterval(timerId);
-  }, [playDingSound, dipBGM, updateUI, logTraining, currentView, trackingState]);
+  }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
   // ==========================================
-  // 視圖切換與按鈕處理 (整合 AI 啟動)
+  // 8. 視圖切換與按鈕處理
   // ==========================================
   const startTraining = (type: string) => {
     setActiveModule(type); setCurrentView('TRAINING');
     const state = gameState.current;
-    state.module = type; state.isResting = false; state.restTimeLeft = 0; state.activeTimeAcc = 0;
+    state.module = type; state.isResting = false; state.restTimeLeft = 0;
     
-    if (noSleepRef.current) noSleepRef.current.enable();
-
-    // 只有 1~5 的訓練模組需要啟動鏡頭追蹤
-    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
-      initEyeTracking();
-    }
+    if (noSleepRef.current) { noSleepRef.current.enable(); }
     
     if (type === 'sop') { state.cycle = 1; state.phase = 'LOOKING'; state.sopTimeLeft = 10; playBGM('/game1.mp3'); }
     else if (type === 'stretch') { state.stretchTimeLeft = 45; playBGM('/game2.mp3'); }
@@ -510,19 +489,17 @@ export default function EyeComfortApp() {
   };
 
   const returnToDashboard = () => {
-    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module)) {
-      stopBGM(); stopEyeTracking();
-    }
+    if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module)) stopBGM();
     gameState.current.module = 'DASHBOARD'; 
     engineRef.current?.stop();
-    if (noSleepRef.current) noSleepRef.current.disable();
+    if (noSleepRef.current) { noSleepRef.current.disable(); }
     setCurrentView('DASHBOARD'); setActiveModule(null);
   };
 
   const showModuleIntro = (type: string) => { setActiveModule(type); setCurrentView('INFO_INTRO'); };
 
   // ==========================================
-  // React JSX 渲染樹
+  // 9. React JSX 渲染樹
   // ==========================================
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#0f141e] font-sans">
@@ -567,36 +544,83 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 (與上版完全相同，折疊以省版面) */}
+      {/* 視圖 2: 旗艦級護眼營養衛教頁面 (INFO_NUTRIENT) */}
       {currentView === 'INFO_NUTRIENT' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
             <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold shadow-lg">🔙 返回大廳</button>
             <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#00ffcc] pb-2.5 mb-[15px] font-bold">🔬 旗艦護眼營養部位百科</h2>
+            
             <div className="mb-6 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d] shadow-[0_0_10px_rgba(255,77,77,0.2)]">
               <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-3 flex items-center gap-2"><span>⚠️</span> 醫療法規與免責聲明</h3>
               <p className="text-[#d1b0b0] text-[16px] leading-[1.8] m-0">本頁面提供之營養素資訊僅供日常生理保健與學理參考，<strong>不代表任何產品具備診斷、治療或預防眼科疾病之療效</strong>。營養素通常是維持組織正常功能或降低缺乏風險，不能取代眼科檢查與治療。</p>
             </div>
+
             <p className="text-[#8b9bb4] text-[17px] leading-[1.6] mb-5 bg-[#162b2b] p-4 rounded-lg"><strong className="text-[#00ffcc]">閱讀重點｜</strong>眼睛是非常精密的器官，不同的解剖構造需要對應不同的關鍵營養素。單一成分無法顧及全眼健康，以下為具備醫學學理支持的營養素對應表：</p>
+            
             <button onClick={() => setCurrentView('INFO_RPE')} className="w-full py-4 mb-6 bg-[#2B579A] text-white border-none rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(43,87,154,0.4)] transition-transform hover:scale-[1.02]">
               👉 深度解析：為什麼視網膜色素上皮 (RPE) 很重要？
             </button>
+
             <div className="overflow-x-auto mb-[30px] rounded-lg shadow-lg">
               <table className="w-full min-w-[600px] border-collapse text-[#fffdd0] text-[15px] leading-[1.6]">
-                <thead><tr className="bg-[#1a2233] text-left"><th className="p-3 border border-[#2a3a5a] w-[25%]">關鍵營養素</th><th className="p-3 border border-[#2a3a5a] w-[25%]">主要作用部位</th><th className="p-3 border border-[#2a3a5a] w-[50%]">學理與功能性參考</th></tr></thead>
+                <thead>
+                  <tr className="bg-[#1a2233] text-left">
+                    <th className="p-3 border border-[#2a3a5a] w-[25%]">關鍵營養素</th>
+                    <th className="p-3 border border-[#2a3a5a] w-[25%]">主要作用部位</th>
+                    <th className="p-3 border border-[#2a3a5a] w-[50%]">學理與功能性參考</th>
+                  </tr>
+                </thead>
                 <tbody>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">葉黃素、玉米黃素</td><td className="p-3 border border-[#2a3a5a]">視網膜黃斑部、中央凹</td><td className="p-3 border border-[#2a3a5a]">構成黃斑色素，與中央視力、辨色及對比敏感度有關；是最直接對應黃斑部的營養素。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Propolins<br/>(尤其 Propolin G)</td><td className="p-3 border border-[#2a3a5a]">視網膜色素上皮 (RPE)；黃斑部外層</td><td className="p-3 border border-[#2a3a5a]">細胞實驗顯示可提高氧化或缺氧損傷下的存活；動物模型中顯示 RPE 功能改善。目前屬細胞與動物前臨床證據。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素A、β-胡蘿蔔素</td><td className="p-3 border border-[#2a3a5a]">視網膜桿狀細胞；角膜、結膜</td><td className="p-3 border border-[#2a3a5a]">參與視紫質形成並維持眼表上皮；缺乏時可能導致乾眼與角膜損傷。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">DHA</td><td className="p-3 border border-[#2a3a5a]">視網膜感光細胞</td><td className="p-3 border border-[#2a3a5a]">感光細胞膜的重要結構成分，在視網膜含量很高。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Omega-3<br/>(EPA、DHA)</td><td className="p-3 border border-[#2a3a5a]">淚膜、瞼板腺、眼表</td><td className="p-3 border border-[#2a3a5a]">可能影響發炎與淚膜油脂層；但大型研究中對中重度乾眼的改善未顯著優於安慰劑。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素C、維生素E</td><td className="p-3 border border-[#2a3a5a]">水晶體、視網膜</td><td className="p-3 border border-[#2a3a5a]">屬抗氧化營養素；與其他成分組成 AREDS2 時可延緩特定 AMD 惡化。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">鋅 (Zinc)</td><td className="p-3 border border-[#2a3a5a]">視網膜、黃斑部</td><td className="p-3 border border-[#2a3a5a]">視網膜含有較高濃度的鋅；在完整 AREDS2 配方中，可協助延緩特定程度 AMD 惡化。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">銅 (Copper)</td><td className="p-3 border border-[#2a3a5a]">無特定單一結構</td><td className="p-3 border border-[#2a3a5a]">加入配方主要目的是防止長期高劑量鋅造成銅缺乏。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素 B1、B12、葉酸</td><td className="p-3 border border-[#2a3a5a]">視神經</td><td className="p-3 border border-[#2a3a5a]">嚴重缺乏可能造成營養性視神經病變；主要作用是避免缺乏以維持神經傳導。</td></tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">葉黃素、玉米黃素</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜黃斑部、中央凹</td>
+                    <td className="p-3 border border-[#2a3a5a]">構成黃斑色素，與中央視力、辨色及對比敏感度有關；是最直接對應黃斑部的營養素。</td>
+                  </tr>
+                  <tr className="bg-[#162b2b]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Propolins<br/>(尤其 Propolin G)</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜色素上皮 (RPE)；黃斑部外層</td>
+                    <td className="p-3 border border-[#2a3a5a]">細胞實驗顯示可提高氧化或缺氧損傷下的存活；動物模型中顯示 RPE 功能改善。目前屬細胞與動物前臨床證據。</td>
+                  </tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素A、β-胡蘿蔔素</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜桿狀細胞；角膜、結膜</td>
+                    <td className="p-3 border border-[#2a3a5a]">參與視紫質形成並維持眼表上皮；缺乏時可能導致乾眼與角膜損傷。</td>
+                  </tr>
+                  <tr className="bg-[#162b2b]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">DHA</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜感光細胞</td>
+                    <td className="p-3 border border-[#2a3a5a]">感光細胞膜的重要結構成分，在視網膜含量很高。</td>
+                  </tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Omega-3<br/>(EPA、DHA)</td>
+                    <td className="p-3 border border-[#2a3a5a]">淚膜、瞼板腺、眼表</td>
+                    <td className="p-3 border border-[#2a3a5a]">可能影響發炎與淚膜油脂層；但大型研究中對中重度乾眼的改善未顯著優於安慰劑。</td>
+                  </tr>
+                  <tr className="bg-[#162b2b]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素C、維生素E</td>
+                    <td className="p-3 border border-[#2a3a5a]">水晶體、視網膜</td>
+                    <td className="p-3 border border-[#2a3a5a]">屬抗氧化營養素；與其他成分組成 AREDS2 時可延緩特定 AMD 惡化。</td>
+                  </tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">鋅 (Zinc)</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜、黃斑部</td>
+                    <td className="p-3 border border-[#2a3a5a]">視網膜含有較高濃度的鋅；在完整 AREDS2 配方中，可協助延緩特定程度 AMD 惡化。</td>
+                  </tr>
+                  <tr className="bg-[#162b2b]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">銅 (Copper)</td>
+                    <td className="p-3 border border-[#2a3a5a]">無特定單一結構</td>
+                    <td className="p-3 border border-[#2a3a5a]">加入配方主要目的是防止長期高劑量鋅造成銅缺乏。</td>
+                  </tr>
+                  <tr className="bg-[#121824]">
+                    <td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素 B1、B12、葉酸</td>
+                    <td className="p-3 border border-[#2a3a5a]">視神經</td>
+                    <td className="p-3 border border-[#2a3a5a]">嚴重缺乏可能造成營養性視神經病變；主要作用是避免缺乏以維持神經傳導。</td>
+                  </tr>
                 </tbody>
               </table>
             </div>
+
             <div className="bg-[#2a1f1a] p-5 rounded-lg border border-[#e5b55e] mb-6">
               <h3 className="text-[#e5b55e] text-[18px] font-bold mb-3">📚 主要資料來源</h3>
               <ul className="text-[#a5b6cf] text-[14px] leading-[1.6] pl-5 m-0 space-y-1">
@@ -611,14 +635,18 @@ export default function EyeComfortApp() {
         </div>
       )}
 
+      {/* 視圖 2.5: RPE 與脂褐質 (Lipofuscin) 純學理說明頁面 (INFO_RPE) */}
       {currentView === 'INFO_RPE' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
             <button onClick={() => setCurrentView('INFO_NUTRIENT')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold shadow-lg">🔙 返回營養百科</button>
             <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#2B579A] pb-2.5 mb-[20px] font-bold">🧬 為什麼視網膜色素上皮 (RPE) 很重要？</h2>
+            
             <div className="bg-[#161b22] p-6 rounded-xl border-l-4 border-[#E5B55E] mb-6">
               <h3 className="text-[#E5B55E] text-[22px] font-bold mb-3">👁️ 眼睛後勤樞紐與專屬垃圾處理廠</h3>
-              <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0 mb-4">視網膜色素上皮細胞（RPE）緊貼著感光細胞，是維持視覺運作不可或缺的後勤防線。它具備以下五大關鍵生理功能：</p>
+              <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0 mb-4">
+                視網膜色素上皮細胞（RPE）緊貼著感光細胞，是維持視覺運作不可或缺的後勤防線。它具備以下五大關鍵生理功能：
+              </p>
               <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-3">
                 <li><strong className="text-[#fffdd0]">1. 運輸營養素：</strong>作為脈絡膜微血管與視網膜間的橋樑，將維生素、氧氣等營養素精準運送給感光細胞。</li>
                 <li><strong className="text-[#fffdd0]">2. 排除代謝廢物：</strong>感光細胞每天運作會產生大量代謝廢物，RPE 就像垃圾處理廠，負責吞噬並分解這些廢物。</li>
@@ -627,27 +655,39 @@ export default function EyeComfortApp() {
                 <li><strong className="text-[#fffdd0]">5. 預防黃斑部病變：</strong>維持 RPE 的健康活力，能有效避免老化廢物堆積引發的發炎反應，是降低老年性黃斑部病變 (AMD) 發生風險的核心機制。</li>
               </ul>
             </div>
+
             <div className="bg-[#162b2b] p-6 rounded-xl border-l-4 border-[#ff4d4d] mb-6">
               <h3 className="text-[#ff4d4d] text-[22px] font-bold mb-3">☣️ 視力的隱形殺手：脂褐質 (Lipofuscin)</h3>
-              <p className="text-[#fffdd0] text-[16px] leading-[1.8] mb-4">在視覺運作的過程中，感光細胞會不斷代謝並產生廢棄物。這些廢棄物被 RPE 吞噬後，會殘留下無法被完全分解的物質，稱為<strong>「脂褐質 (Lipofuscin)」</strong>（一種衰老色素）。脂褐質對眼睛的影響極具破壞性：</p>
+              <p className="text-[#fffdd0] text-[16px] leading-[1.8] mb-4">
+                在視覺運作的過程中，感光細胞會不斷代謝並產生廢棄物。這些廢棄物被 RPE 吞噬後，會殘留下無法被完全分解的物質，稱為<strong>「脂褐質 (Lipofuscin)」</strong>（一種衰老色素）。脂褐質對眼睛的影響極具破壞性：
+              </p>
               <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-2">
                 <li><strong className="text-[#fffdd0]">引發光毒性反應：</strong>脂褐質含有具備光毒性的螢光物質（如 A2E），當受到藍光或強光照射時，會產生大量的自由基與「氧化壓力」。</li>
                 <li><strong className="text-[#fffdd0]">摧毀細胞機能：</strong>過多的脂褐質會破壞 RPE 細胞內的溶酶體與粒線體，導致 RPE 細胞逐漸凋亡。</li>
                 <li><strong className="text-[#fffdd0]">引發黃斑部病變：</strong>當 RPE 無法再處理廢物時，這些物質會堆積在視網膜底層形成「隱結 (Drusen)」，這是引發老年性黃斑部病變 (AMD) 和視力喪失的關鍵元凶。</li>
               </ul>
             </div>
+
             <div className="bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#00ffcc] mb-6">
               <h3 className="text-[#00ffcc] text-[22px] font-bold mb-3">🛡️ RPE 是對抗脂褐質的唯一防線</h3>
-              <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0">RPE 是視網膜中唯一具備強大吞噬與代謝機制的細胞。健康的 RPE 能夠透過自身的抗氧化系統，中和脂褐質產生的毒性，並盡可能減緩其堆積速度。<br/><br/>一旦 RPE 失去活力或受損，脂褐質就會如同無法被清理的「核廢料」般引發一連串的發炎反應，最終導致上方依賴它的感光細胞餓死或毒死。因此，<strong>給予 RPE 充足的專屬滋養與抗氧化保護，維持 RPE 細胞的存活率與代謝活力，是預防眼部老化與病變的重中之重。</strong></p>
+              <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0">
+                RPE 是視網膜中唯一具備強大吞噬與代謝機制的細胞。健康的 RPE 能夠透過自身的抗氧化系統，中和脂褐質產生的毒性，並盡可能減緩其堆積速度。<br/><br/>
+                一旦 RPE 失去活力或受損，脂褐質就會如同無法被清理的「核廢料」般引發一連串的發炎反應，最終導致上方依賴它的感光細胞餓死或毒死。因此，<strong>給予 RPE 充足的專屬滋養與抗氧化保護，維持 RPE 細胞的存活率與代謝活力，是預防眼部老化與病變的重中之重。</strong>
+              </p>
             </div>
+            
             <div className="bg-[#2a1f1a] p-4 rounded-lg border border-[#e5b55e]">
               <h3 className="text-[#e5b55e] text-[16px] font-bold mb-2">📚 醫學學理參考文獻</h3>
-              <p className="text-[#a5b6cf] text-[13px] leading-[1.6] m-0">Sparrow, J. R., & Boulton, M. (2005). RPE lipofuscin and its role in retinal pathobiology. Experimental eye research.<br/>Boulton, M., et al. (2001). Lipofuscin is a photoinducible free radical generator. Journal of photochemistry and photobiology.</p>
+              <p className="text-[#a5b6cf] text-[13px] leading-[1.6] m-0">
+                Sparrow, J. R., & Boulton, M. (2005). RPE lipofuscin and its role in retinal pathobiology. Experimental eye research.<br/>
+                Boulton, M., et al. (2001). Lipofuscin is a photoinducible free radical generator. Journal of photochemistry and photobiology.
+              </p>
             </div>
           </div>
         </div>
       )}
 
+      {/* 視圖 3: 行事曆 (CALENDAR) */}
       {currentView === 'CALENDAR' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -670,40 +710,48 @@ export default function EyeComfortApp() {
         </div>
       )}
 
+      {/* 視圖 4: 完整 5 大模組的學理與文獻說明 (INFO_MODULES) */}
       {currentView === 'INFO_MODULES' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
             <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
             <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#00ffcc] pb-2.5 mb-[15px] font-bold">🩺 數位復健模組學理與文獻探討</h2>
+            
             <div className="mb-8 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d] shadow-[0_0_10px_rgba(255,77,77,0.2)]">
               <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-3 flex items-center gap-2"><span>⚠️</span> 醫療法規與免責聲明</h3>
               <p className="text-[#d1b0b0] text-[16px] leading-[1.8] m-0">本應用程式定位為日常視覺疲勞之放鬆與保健輔助工具，<strong>非屬醫療器材</strong>。下方引述之醫學期刊僅作為視覺生理學及模組設計之學理背景參考，<strong>不代表本系統具有診斷、治療、矯正任何眼科疾病之療效</strong>。</p>
             </div>
+            
             <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FF6B6B]">
               <h3 className="text-[#FF6B6B] text-[22px] font-bold mb-3">🚀 45秒快速舒緩</h3>
               <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>結合動態視覺刺激與淚膜穩定概念。輔助舒緩初期水晶體對焦壓力，並藉由閉眼動作輔助眼瞼板腺分泌油脂。</p>
               <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Rosenfield, M. (2011). Computer vision syndrome... Ophthalmic and Physiological Optics.</span></div>
             </div>
+            
             <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#4D96FF]">
               <h3 className="text-[#4D96FF] text-[22px] font-bold mb-3">🔄 動態 3D 眼肌伸展</h3>
               <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>透過眼球的極限軌跡追蹤（平滑追隨運動），引導六條眼外肌進行大範圍伸展活動，幫助眼周肌肉放鬆。</p>
               <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Kim, S. D., et al. (2016). Effects of eye exercises... Journal of Physical Therapy Science.</span></div>
             </div>
+
             <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#6BCB77]">
               <h3 className="text-[#6BCB77] text-[22px] font-bold mb-3">🎮 睫狀肌深空追光</h3>
               <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>利用 3D 空間營造「光學無限遠（Optical Infinity）」的錯覺。引導視線向深空遠眺，協助控制水晶體的睫狀肌放鬆，作為輔助對抗因長時間近距離工作所引起的調節性疲勞之日常運動。</p>
               <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Tosha, C., et al. (2009). Accommodation response and visual discomfort. Ophthalmic and Physiological Optics.</span></div>
             </div>
+
             <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FFD93D]">
               <h3 className="text-[#FFD93D] text-[22px] font-bold mb-3">🌌 星雲散焦與神經放鬆</h3>
               <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>透過解除中央凹對焦並刻意體驗「周邊視覺」，配合固定頻率的深度共振呼吸，能夠輔助調節自律神經張力，幫助放鬆身心與日常視覺壓力。</p>
               <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Zaccaro, A., et al. (2018). How breath-control can change your life. Frontiers in Human Neuroscience.</span></div>
             </div>
+
             <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FF3366]">
               <h3 className="text-[#FF3366] text-[22px] font-bold mb-3">🎯 Z 軸遠近對焦飛梭</h3>
               <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>參考視覺活動中的「調節靈敏度（Accommodative Facility）」概念。藉由引導睫狀肌在看近與看遠之間進行快速切換活動，作為維持水晶體調節靈活度與反應速度的日常輔助練習。</p>
               <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Sterner, B., et al. (2001). Accommodation facility training. Documenta Ophthalmologica.</span></div>
             </div>
+
             <div className="text-center mt-8">
               <button onClick={() => setCurrentView('DASHBOARD')} className="px-[30px] py-[15px] bg-[#00ffcc] text-[#0f141e] border-none rounded-full text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(0,255,204,0.3)]">👉 返回大廳開始訓練</button>
             </div>
@@ -711,6 +759,7 @@ export default function EyeComfortApp() {
         </div>
       )}
 
+      {/* 視圖 5: 訓練前說明頁面 (INFO_INTRO) */}
       {currentView === 'INFO_INTRO' && activeModule && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -735,28 +784,6 @@ export default function EyeComfortApp() {
       {currentView === 'TRAINING' && (
         <>
           <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
-          
-          {/* AI 畫中畫校正窗 (PIP) */}
-          {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
-            <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none">
-              <video ref={videoRef} className="w-full h-full object-cover transform scale-x-[-1]" playsInline muted autoPlay />
-              {trackingState === 'INITIALIZING' && <div className="absolute inset-0 bg-black/70 flex items-center justify-center text-[#E5B55E] text-[12px] font-bold">AI 載入中...</div>}
-              {trackingState === 'NO_PERMISSION' && <div className="absolute inset-0 bg-red-900 flex items-center justify-center text-white text-[12px] font-bold text-center px-2">無相機權限<br/>(盲測模式)</div>}
-              {trackingState === 'LOST' && <div className="absolute inset-0 bg-red-500/60 flex items-center justify-center text-white text-[16px] font-bold animate-pulse">視線遺失</div>}
-            </div>
-          )}
-
-          {/* 失去追蹤的防呆紅屏警告 (優雅降級) */}
-          {trackingState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
-            <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
-              <div className="text-[60px] mb-4">⚠️</div>
-              <h2 className="text-[#ff4d4d] text-[28px] font-bold mb-4 tracking-widest">失去視線追蹤</h2>
-              <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                訓練與時間已暫停。<br/>請直視螢幕鏡頭，並確認<strong className="text-[#E5B55E]">鏡片無嚴重反光</strong>。
-              </p>
-            </div>
-          )}
-
           <div className="absolute inset-x-0 w-full px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10 transition-all duration-[1.2s] ease-[cubic-bezier(0.25,1,0.5,1)]" style={{ top: uiState.top, transform: 'translateY(-50%)' }}>
             <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] flex flex-col items-center justify-center">{uiState.title}</div>
             <div className="w-full text-center text-[#00ffcc] font-mono text-[24px] mb-[20px]">{uiState.timer}</div>
@@ -775,7 +802,7 @@ export default function EyeComfortApp() {
         </>
       )}
 
-      {/* 視圖 7: 測試評估報告 (TEST_REPORT) */}
+      {/* 視圖 7: 專利級邏輯運算：測試評估報告 (TEST_REPORT) */}
       {currentView === 'TEST_REPORT' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border flex flex-col items-center justify-center">
           <div className="w-full max-w-[600px] bg-[#1a2233] p-8 rounded-2xl border-2 border-[#9D4EDD] shadow-[0_0_25px_rgba(157,78,221,0.3)] mt-[80px] mb-[40px]">
@@ -783,16 +810,29 @@ export default function EyeComfortApp() {
             <div className="mb-6 bg-[#1f1616] p-4 rounded-lg border border-[#ff4d4d]">
               <p className="text-[#d1b0b0] text-[15px] leading-[1.6] m-0 text-center">⚠️ 免責聲明：本報告基於您的主觀輸入，僅供日常保健評估參考，不代表醫學診斷。若有異常請立即就醫。</p>
             </div>
-            <div className="flex justify-between items-center bg-[#161b22] p-5 rounded-xl mb-4"><span className="text-[#fffdd0] text-[20px]">左眼評估結果</span><span className={`text-[22px] font-bold ${testResults.leftEye === 'NORMAL' ? 'text-[#00ffcc]' : 'text-[#ff4d4d]'}`}>{testResults.leftEye === 'NORMAL' ? '✅ 正常' : '❌ 發現異常'}</span></div>
-            <div className="flex justify-between items-center bg-[#161b22] p-5 rounded-xl mb-6"><span className="text-[#fffdd0] text-[20px]">右眼評估結果</span><span className={`text-[22px] font-bold ${testResults.rightEye === 'NORMAL' ? 'text-[#00ffcc]' : 'text-[#ff4d4d]'}`}>{testResults.rightEye === 'NORMAL' ? '✅ 正常' : '❌ 發現異常'}</span></div>
+            
+            <div className="flex justify-between items-center bg-[#161b22] p-5 rounded-xl mb-4">
+              <span className="text-[#fffdd0] text-[20px]">左眼評估結果</span>
+              <span className={`text-[22px] font-bold ${testResults.leftEye === 'NORMAL' ? 'text-[#00ffcc]' : 'text-[#ff4d4d]'}`}>{testResults.leftEye === 'NORMAL' ? '✅ 正常' : '❌ 發現異常'}</span>
+            </div>
+            <div className="flex justify-between items-center bg-[#161b22] p-5 rounded-xl mb-6">
+              <span className="text-[#fffdd0] text-[20px]">右眼評估結果</span>
+              <span className={`text-[22px] font-bold ${testResults.rightEye === 'NORMAL' ? 'text-[#00ffcc]' : 'text-[#ff4d4d]'}`}>{testResults.rightEye === 'NORMAL' ? '✅ 正常' : '❌ 發現異常'}</span>
+            </div>
+
             <div className="bg-[#2a1f1a] p-5 rounded-xl border border-[#e5b55e] mb-8">
               <h3 className="text-[#e5b55e] text-[20px] font-bold mb-2">🧠 系統建議與邏輯運算回饋</h3>
-              <p className="text-[#fffdd0] text-[16px] leading-[1.6] m-0">{(testResults.leftEye === 'NORMAL' && testResults.rightEye === 'NORMAL') ? "太棒了！您的雙眼視覺狀態良好。請繼續保持良好的用眼習慣，並建議搭配營養配方與數位眼肌訓練模組作為日常保養。" : "系統運算警告：偵測到潛在的視覺扭曲或模糊異常。這可能是黃斑部或散光軸向的疲勞警訊，強烈建議您盡速尋求專業眼科醫師的精密儀器檢查！"}</p>
+              <p className="text-[#fffdd0] text-[16px] leading-[1.6] m-0">
+                {(testResults.leftEye === 'NORMAL' && testResults.rightEye === 'NORMAL') 
+                  ? "太棒了！您的雙眼視覺狀態良好。請繼續保持良好的用眼習慣，並建議搭配營養配方與數位眼肌訓練模組作為日常保養。" 
+                  : "系統運算警告：偵測到潛在的視覺扭曲或模糊異常。這可能是黃斑部或散光軸向的疲勞警訊，強烈建議您盡速尋求專業眼科醫師的精密儀器檢查！"}
+              </p>
             </div>
             <button onClick={returnToDashboard} className="w-full py-4 bg-[#9D4EDD] text-white rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(157,78,221,0.5)]">完成並返回大廳</button>
           </div>
         </div>
       )}
+
     </div>
   );
 }

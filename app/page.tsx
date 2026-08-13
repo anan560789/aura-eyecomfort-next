@@ -54,9 +54,8 @@ export default function EyeComfortApp() {
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
   const [camRotation, setCamRotation] = useState<number>(0);
 
-  // 【核心新增】儲存真實螢幕尺寸與虛擬轉向狀態
-  const [dim, setDim] = useState({ w: 0, h: 0 });
-  const [isSimulatedLandscape, setIsSimulatedLandscape] = useState<boolean>(false);
+  // 【核心新增】系統主動偵測轉向角度 (0, 90, -90)
+  const [deviceUiAngle, setDeviceUiAngle] = useState<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
@@ -73,18 +72,8 @@ export default function EyeComfortApp() {
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
-    isSimulatedLandscape: false,
-    isEffectiveLandscape: false
+    deviceUiAngle: 0
   });
-
-  useEffect(() => {
-    const handleOrientationChange = () => {
-      setDim({ w: window.innerWidth, h: window.innerHeight });
-    };
-    handleOrientationChange(); // 初始化
-    window.addEventListener('resize', handleOrientationChange);
-    return () => window.removeEventListener('resize', handleOrientationChange);
-  }, []);
 
   useEffect(() => {
     const unlocked = localStorage.getItem('aura_premium_unlocked') === 'true';
@@ -102,6 +91,26 @@ export default function EyeComfortApp() {
     }
   };
 
+  // 【核心功能】主動偵測實體陀螺儀並連動 UI 旋轉
+  const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
+    const gamma = event.gamma; 
+    if (gamma === null || gamma === undefined) return;
+    
+    let newAngle = gameState.current.deviceUiAngle;
+    
+    // gamma 反映手機左右傾斜：大於 50 視為右倒，小於 -50 視為左倒
+    if (gamma > 50) newAngle = -90; 
+    else if (gamma < -50) newAngle = 90; 
+    else if (Math.abs(gamma) < 25) newAngle = 0; 
+
+    if (newAngle !== gameState.current.deviceUiAngle) {
+      gameState.current.deviceUiAngle = newAngle;
+      setDeviceUiAngle(newAngle);
+      // 通知 3D 引擎重新計算絕對滿版的長寬
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+    }
+  }, []);
+
   const startTrackingLoop = useCallback(() => {
     let lostFrames = 0;
     const track = () => {
@@ -118,7 +127,7 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
           
-          // 【核心修正】升級為絕對距離公式，免疫一切相機側翻或顛倒問題
+          // 絕對距離公式，免疫一切相機側翻或顛倒問題
           const leftDist = Math.hypot(lm[1].x - lm[33].x, lm[1].y - lm[33].y);
           const rightDist = Math.hypot(lm[263].x - lm[1].x, lm[263].y - lm[1].y);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
@@ -142,8 +151,8 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            // 【核心修正】橫向模式時放寬判定閾值，避免頻繁誤判
-            const threshold = gameState.current.isEffectiveLandscape ? 2.5 : 1.6;
+            // 橫向模式時放寬判定閾值
+            const threshold = gameState.current.deviceUiAngle !== 0 ? 2.5 : 1.6;
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
             }
@@ -581,7 +590,7 @@ export default function EyeComfortApp() {
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
       // 【核心修正】3D 鏡頭智慧平移 (解決文字與星球重疊問題)
-      const targetCamX = gameState.current.isEffectiveLandscape ? 3.5 : 0;
+      const targetCamX = gameState.current.deviceUiAngle !== 0 ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
       camera.lookAt(camera.position.x, 0, -100);
       
@@ -615,7 +624,7 @@ export default function EyeComfortApp() {
         gameState.current.stretchAngle += (0.025 * gameState.current.prescription.stretchSpeed); 
         const speed = gameState.current.stretchAngle; 
         
-        // 【修正】限制 Z 軸避免靠近鏡頭時產生橢圓透視變形，改由 scale 強化遠近感
+        // 限制 Z 軸避免靠近鏡頭時產生橢圓透視變形，改由 scale 強化遠近感
         const currentZ = -40 + Math.sin(speed * 0.5) * 15; 
         const distToCamera = camera.position.z - currentZ;
         const vFovRad = (camera.fov * Math.PI) / 180;
@@ -625,18 +634,18 @@ export default function EyeComfortApp() {
         const edgeX = visibleWidth / 2; 
         const edgeY = visibleHeight / 2;
         
-        // 【修正】確保橫向時，軌跡完全包覆在畫面內，絕對不會跑出邊界
+        // 確保橫向時，軌跡完全包覆在畫面內，絕對不會跑出邊界
         let centerX = camera.position.x;
         let ampX = edgeX * 0.8; // 直立時保持原樣
         
-        if (gameState.current.isEffectiveLandscape) {
+        if (gameState.current.deviceUiAngle !== 0) {
             centerX = camera.position.x - edgeX * 0.15; // 稍微向左偏移讓出文字空間
             ampX = edgeX * 0.65; // 強制將軌跡限縮在畫面寬度的 65% 內
         }
         
         const ampY = Math.min(edgeY * 0.6, 12); 
         
-        // 【修正】球體飛近時，增加真實的放大比例，不再依賴容易畸變的透視法
+        // 球體飛近時，增加真實的放大比例，不再依賴容易畸變的透視法
         const extraScale = (60 - distToCamera) * 0.02;
         stretchOrb.scale.setScalar(1 + extraScale + Math.cos(speed * 3) * 0.1);
         
@@ -679,24 +688,25 @@ export default function EyeComfortApp() {
     
     renderer.setAnimationLoop(animate);
     
-    // 【核心修正】3D 引擎重新計算解析度，解決橢圓形畸變與白邊問題
+    // 【核心修正】3D 引擎根據陀螺儀角度重新計算真正的長寬，解決橢圓形畸變！
     const handleResize = () => { 
       setTimeout(() => {
         const w = window.innerWidth;
         const h = window.innerHeight;
-        const isNative = w > h;
-        const sim = gameState.current.isSimulatedLandscape && !isNative;
-
-        // 如果是模擬橫向，長寬必須完美對調以配合 CSS 旋轉，這樣球體才不會變橢圓！
-        const renderW = sim ? h : w;
-        const renderH = sim ? w : h;
-
-        camera.aspect = renderW / renderH; 
-        camera.updateProjectionMatrix(); 
-        renderer.setSize(renderW, renderH); 
+        const angle = gameState.current.deviceUiAngle;
         
-        gameState.current.isEffectiveLandscape = renderW > renderH;
-      }, 100);
+        // 如果偵測到翻轉，3D 畫布的長寬必須對調來適應 CSS 的旋轉框架
+        const renderW = angle !== 0 ? Math.max(w, h) : Math.min(w, h);
+        const renderH = angle !== 0 ? Math.min(w, h) : Math.max(w, h);
+
+        if (camera) {
+          camera.aspect = renderW / renderH; 
+          camera.updateProjectionMatrix(); 
+        }
+        if (renderer) {
+          renderer.setSize(renderW, renderH); 
+        }
+      }, 50);
     };
     window.addEventListener('resize', handleResize);
     
@@ -838,6 +848,24 @@ export default function EyeComfortApp() {
     return () => clearInterval(timerId);
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
+  // 【核心新增】點擊訓練模組時，主動請求陀螺儀權限並綁定自動翻轉
+  const startTrainingWithOrientation = async (type: string) => {
+    try {
+      if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+        const permissionState = await (DeviceOrientationEvent as any).requestPermission();
+        if (permissionState === 'granted') {
+          window.addEventListener('deviceorientation', handleDeviceOrientation);
+        }
+      } else {
+        window.addEventListener('deviceorientation', handleDeviceOrientation);
+      }
+    } catch (error) {
+      console.warn('陀螺儀權限未取得，將使用預設視角');
+      window.addEventListener('deviceorientation', handleDeviceOrientation);
+    }
+    startTraining(type);
+  };
+
   const startTraining = (type: string) => {
     if (audioRef.current.ctx?.state === 'suspended') { audioRef.current.ctx.resume(); }
 
@@ -880,9 +908,10 @@ export default function EyeComfortApp() {
     }
     gameState.current.module = 'DASHBOARD'; 
     
-    // 【核心修正】返回大廳時完全解除虛擬旋轉
-    setIsSimulatedLandscape(false);
-    gameState.current.isSimulatedLandscape = false;
+    // 【核心清除】返回大廳時移除陀螺儀監聽，並將畫面轉正
+    window.removeEventListener('deviceorientation', handleDeviceOrientation);
+    setDeviceUiAngle(0);
+    gameState.current.deviceUiAngle = 0;
     setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
 
     engineRef.current?.stop();
@@ -900,31 +929,24 @@ export default function EyeComfortApp() {
     if (isIntro) {
       showModuleIntro(type);
     } else {
-      startTraining(type);
+      startTrainingWithOrientation(type);
     }
   };
-
-  // 【核心新增】統整橫式的最終判定條件，提供給 RWD 介面層排版使用
-  const isNativeLandscape = dim.w > dim.h;
-  const applySimulatedLandscape = isSimulatedLandscape && !isNativeLandscape;
-  const effectiveW = applySimulatedLandscape ? dim.h : dim.w;
-  const effectiveH = applySimulatedLandscape ? dim.w : dim.h;
-  const isEffectiveLandscape = effectiveW > effectiveH;
 
   // ==========================================
   // React JSX 渲染樹
   // ==========================================
   return (
-    // 【核心修正】利用外層 fixed inset-0 徹底鎖死安全區域白邊，內層 relative 來承接物理尺寸與旋轉
+    // 【極致滿版容器】永遠跟隨系統最大化，內部依據陀螺儀反向旋轉
     <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none flex items-center justify-center">
       <div 
         className="relative bg-[#0f141e]"
         style={{
-          width: `${effectiveW}px`,
-          height: `${effectiveH}px`,
-          transform: applySimulatedLandscape ? 'rotate(90deg)' : 'none',
+          width: deviceUiAngle === 0 ? '100vw' : '100vh',
+          height: deviceUiAngle === 0 ? '100vh' : '100vw',
+          transform: `rotate(${deviceUiAngle}deg)`,
           transformOrigin: 'center center',
-          transition: 'transform 0.3s ease, width 0.3s ease, height 0.3s ease'
+          transition: 'transform 0.5s cubic-bezier(0.25, 1, 0.5, 1), width 0.5s ease, height 0.5s ease'
         }}
       >
         <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
@@ -957,7 +979,7 @@ export default function EyeComfortApp() {
 
               {!isPremiumUnlocked && (
                 <div className="w-full bg-[#2a1f1a] border-2 border-[#ff4d4d] rounded-xl p-5 mb-5 shadow-[0_0_15px_rgba(255,77,77,0.2)] flex flex-col items-center">
-                  <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-2">🔒 啟 দর্শ動完整醫療級復健療程</h3>
+                  <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-2">🔒 啟動完整醫療級復健療程</h3>
                   <p className="text-[#d1b0b0] text-[15px] text-center mb-4">請輸入診所開立之 30 天數位護眼計畫授權碼，解鎖全套模組。</p>
                   <button onClick={() => setShowRedeemModal(true)} className="px-6 py-3 bg-[#ff4d4d] text-white font-bold rounded-full w-full max-w-[300px]">🎟️ 輸入處方授權碼</button>
                 </div>
@@ -1138,7 +1160,7 @@ export default function EyeComfortApp() {
                 <p className="text-[#8b9bb4] text-[18px] leading-[1.8] m-0" dangerouslySetInnerHTML={{ __html: medicalPrinciples[activeModule].principle }}></p>
               </div>
               <div className="text-center">
-                <button onClick={() => startTraining(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
+                <button onClick={() => startTrainingWithOrientation(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
               </div>
             </div>
           </div>
@@ -1147,27 +1169,14 @@ export default function EyeComfortApp() {
         {currentView === 'TRAINING' && (
           <>
             <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
-            
-            {/* 【核心修正】將轉向按鈕恢復，點擊後會通知 3D 引擎與外層容器切換長寬對調 */}
-            <button
-               onClick={() => {
-                   const newVal = !isSimulatedLandscape;
-                   setIsSimulatedLandscape(newVal);
-                   gameState.current.isSimulatedLandscape = newVal;
-                   setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
-               }}
-               className="absolute top-5 right-5 z-20 flex items-center justify-center gap-2 bg-[#1a2233]/70 border border-[#2a3a5a] px-4 py-2 rounded-full backdrop-blur-md pointer-events-auto shadow-lg text-[#8b9bb4] hover:text-[#00ffcc] transition-colors"
-            >
-              <span className="text-[18px]">🔄</span>
-              <span className="text-[14px] font-bold tracking-wide">切換轉向</span>
-            </button>
 
             {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
               <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
                 <video 
                   ref={videoRef} 
                   className="w-full h-full object-cover transition-transform duration-300" 
-                  style={{ transform: `scaleX(-1) rotate(${camRotation}deg)` }} 
+                  // 根據 UI 旋轉自動反向補償相機
+                  style={{ transform: `scaleX(-1) rotate(${(camRotation + (deviceUiAngle === 90 ? -90 : deviceUiAngle === -90 ? 90 : 0)) % 360}deg)` }} 
                   playsInline 
                   muted 
                   autoPlay 
@@ -1214,8 +1223,8 @@ export default function EyeComfortApp() {
             <div 
               className="absolute px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10" 
               style={{
-                transition: 'all 1.2s cubic-bezier(0.25,1,0.5,1)',
-                ...(isEffectiveLandscape
+                transition: 'all 0.8s cubic-bezier(0.25,1,0.5,1)',
+                ...(deviceUiAngle !== 0
                   ? uiState.position === 'CENTER'
                     ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '80%' }
                     : { top: '50%', left: '75%', transform: 'translate(-50%, -50%)', width: '45%' }

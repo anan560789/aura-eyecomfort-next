@@ -73,14 +73,13 @@ export default function EyeComfortApp() {
     isLandscape: false
   });
 
-  // 【修正】解決網頁旋轉時漂移與縮放問題
   useEffect(() => {
     const handleOrientationChange = () => {
       setTimeout(() => {
         const landscape = window.innerWidth > window.innerHeight;
         setIsLandscape(landscape);
         gameState.current.isLandscape = landscape;
-        window.scrollTo(0, 0); // 強制防止畫面偏移
+        window.scrollTo(0, 0); 
       }, 100);
     };
     window.addEventListener('resize', handleOrientationChange);
@@ -120,7 +119,6 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
           
-          // 【核心修正】升級為絕對距離公式，免疫一切相機側翻或顛倒問題
           const leftDist = Math.hypot(lm[1].x - lm[33].x, lm[1].y - lm[33].y);
           const rightDist = Math.hypot(lm[263].x - lm[1].x, lm[263].y - lm[1].y);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
@@ -144,7 +142,6 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            // 【核心修正】橫向模式時放寬判定閾值，避免頻繁誤判
             const threshold = gameState.current.isLandscape ? 2.5 : 1.6;
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
@@ -582,7 +579,6 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
-      // 【核心修正】3D 鏡頭智慧平移 (解決文字與星球重疊問題)
       const targetCamX = gameState.current.isLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
       camera.lookAt(camera.position.x, 0, -100);
@@ -616,9 +612,9 @@ export default function EyeComfortApp() {
       if (mod === 'stretch' && gameState.current.stretchTimeLeft > 0) {
         gameState.current.stretchAngle += (0.025 * gameState.current.prescription.stretchSpeed); 
         const speed = gameState.current.stretchAngle; 
-        stretchOrb.scale.setScalar(1 + Math.cos(speed * 3) * 0.1);
         
-        const currentZ = -30 + Math.sin(speed * 0.5) * 20;
+        // 【修正】限制 Z 軸避免靠近鏡頭時產生橢圓透視變形，改由 scale 強化遠近感
+        const currentZ = -40 + Math.sin(speed * 0.5) * 15; 
         const distToCamera = camera.position.z - currentZ;
         const vFovRad = (camera.fov * Math.PI) / 180;
         const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToCamera;
@@ -626,10 +622,23 @@ export default function EyeComfortApp() {
         
         const edgeX = visibleWidth / 2; 
         const edgeY = visibleHeight / 2;
-        const ampX = edgeX - 0.5; 
+        
+        // 【修正】確保橫向時，軌跡完全包覆在畫面內，絕對不會跑出邊界
+        let centerX = camera.position.x;
+        let ampX = edgeX * 0.8; // 直立時保持原樣
+        
+        if (gameState.current.isLandscape) {
+            centerX = camera.position.x - edgeX * 0.15; // 稍微向左偏移讓出文字空間
+            ampX = edgeX * 0.65; // 強制將軌跡限縮在畫面寬度的 65% 內
+        }
+        
         const ampY = Math.min(edgeY * 0.6, 12); 
         
-        stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, currentZ);
+        // 【修正】球體飛近時，增加真實的放大比例，不再依賴容易畸變的透視法
+        const extraScale = (60 - distToCamera) * 0.02;
+        stretchOrb.scale.setScalar(1 + extraScale + Math.cos(speed * 3) * 0.1);
+        
+        stretchOrb.position.set(centerX + Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, currentZ);
       }
       
       if (mod === 'breathe' || mod === 'chaser') { 
@@ -668,12 +677,20 @@ export default function EyeComfortApp() {
     
     renderer.setAnimationLoop(animate);
     
+    // 【修正】多重監聽 Resize，強制推翻 iOS Safari 旋轉時的安全邊界留白
     const handleResize = () => { 
-      setTimeout(() => {
-        camera.aspect = window.innerWidth / window.innerHeight; 
+      const updateSize = () => {
+        if (!camera || !renderer) return;
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        camera.aspect = w / h; 
         camera.updateProjectionMatrix(); 
-        renderer.setSize(window.innerWidth, window.innerHeight); 
-      }, 100);
+        renderer.setSize(w, h); 
+      };
+      updateSize();
+      setTimeout(updateSize, 100);
+      setTimeout(updateSize, 300);
+      setTimeout(updateSize, 500);
     };
     window.addEventListener('resize', handleResize);
     
@@ -836,7 +853,7 @@ export default function EyeComfortApp() {
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
       gameState.current.aiStatus = 'INIT'; 
       setTrackingState('INITIALIZING');
-      setCamRotation(0); // 啟動訓練時重置相機旋轉狀態
+      setCamRotation(0); 
       initEyeTracking(); 
     }
     
@@ -879,8 +896,11 @@ export default function EyeComfortApp() {
   // React JSX 渲染樹
   // ==========================================
   return (
-    // 【核心修正】使用 fixed inset-0 將畫面鎖死，杜絕縮放與位移漂移
-    <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none">
+    // 【修正】使用絕對鎖死與 maxWidth/MaxHeight 排除 iOS 白邊留白問題
+    <div 
+      className="fixed top-0 left-0 w-full h-full overflow-hidden bg-[#0f141e] font-sans touch-none"
+      style={{ width: '100vw', height: '100vh', maxWidth: '100%', maxHeight: '100%' }}
+    >
       <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
 
       {currentView === 'DASHBOARD' && (
@@ -1104,7 +1124,6 @@ export default function EyeComfortApp() {
 
           {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
             <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
-              {/* 【核心修正】相機一鍵校正：解決 iOS 原生相機側躺問題 */}
               <video 
                 ref={videoRef} 
                 className="w-full h-full object-cover transition-transform duration-300" 

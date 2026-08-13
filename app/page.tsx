@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
-// 【強化點三】引入 WebXR 的 VRButton 模組
 import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
 import liff from '@line/liff';
 import { createClient } from '@supabase/supabase-js';
@@ -42,14 +41,18 @@ export default function EyeComfortApp() {
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
   const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
-  const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: React.ReactNode, top: string, showContinue: boolean, showInput: boolean }>({ title: '', timer: '', top: '70%', showContinue: false, showInput: false });
+  
+  const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: React.ReactNode, position: 'BOTTOM' | 'CENTER', showContinue: boolean, showInput: boolean }>({ title: '', timer: '', position: 'BOTTOM', showContinue: false, showInput: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
-
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION' | 'TOO_CLOSE'>('IDLE');
   
-  // 動態處方 UI 狀態
+  const [isPremiumUnlocked, setIsPremiumUnlocked] = useState<boolean>(false);
+  const [showRedeemModal, setShowRedeemModal] = useState<boolean>(false);
+  const [redeemCode, setRedeemCode] = useState<string>('');
+
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
+  const [isLandscape, setIsLandscape] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
@@ -65,9 +68,31 @@ export default function EyeComfortApp() {
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
-    // 專利實作：動態處方參數
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 } 
   });
+
+  useEffect(() => {
+    const handleResize = () => setIsLandscape(window.innerWidth > window.innerHeight);
+    window.addEventListener('resize', handleResize);
+    handleResize();
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    const unlocked = localStorage.getItem('aura_premium_unlocked') === 'true';
+    setIsPremiumUnlocked(unlocked);
+  }, []);
+
+  const handleRedeemCode = () => {
+    if (redeemCode.toUpperCase() === 'EYE-A8F2-99B1') {
+      localStorage.setItem('aura_premium_unlocked', 'true');
+      setIsPremiumUnlocked(true);
+      setShowRedeemModal(false);
+      alert('✅ 兌換成功！已為您解鎖 30 天數位護眼計畫全套高階模組。');
+    } else {
+      alert('❌ 無效的授權碼，請檢查實體卡片上的 12 碼序號。');
+    }
+  };
 
   const startTrackingLoop = useCallback(() => {
     let lostFrames = 0;
@@ -114,7 +139,6 @@ export default function EyeComfortApp() {
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > 1.6 || pitchRatio > 1.6) isLost = true;
             }
-            // 極限防呆：18公分 (佔比0.30)
             if (!isLost && !isSopClosing && eyeDistance > 0.30) {
                 isTooClose = true;
             }
@@ -272,32 +296,23 @@ export default function EyeComfortApp() {
     }, 100);
   }, []);
 
-  // ==========================================
-  // 【強化點四】邊緣運算：離線資料同步模組
-  // ==========================================
   const syncOfflineLogs = useCallback(async () => {
     const offlineKey = 'aura_offline_logs';
     const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
     if (offlineLogs.length === 0) return;
 
     try {
-      // 整批上傳暫存的訓練紀錄
       const { error } = await supabase.from('training_logs').insert(offlineLogs);
       if (!error) {
         console.log(`✅ 成功重傳 ${offlineLogs.length} 筆離線訓練紀錄至雲端`);
-        localStorage.removeItem(offlineKey); // 成功後清空邊緣暫存
-      } else {
-        console.error('❌ 重傳失敗，等待下次網路恢復', error);
+        localStorage.removeItem(offlineKey);
       }
-    } catch (err) {
-      console.error('❌ 重傳異常，保留於邊緣端', err);
-    }
+    } catch (err) {}
   }, []);
 
-  // 監聽網路連線狀態，並在元件掛載時嘗試同步一次
   useEffect(() => {
     window.addEventListener('online', syncOfflineLogs);
-    syncOfflineLogs(); // 初始化檢查
+    syncOfflineLogs();
     return () => window.removeEventListener('online', syncOfflineLogs);
   }, [syncOfflineLogs]);
 
@@ -308,14 +323,13 @@ export default function EyeComfortApp() {
       line_uid: lineProfile.uid, 
       module_name: moduleName, 
       duration: durationSec,
-      created_at: new Date().toISOString() // 固定訓練當下時間
+      created_at: new Date().toISOString() 
     };
 
     try { 
       const { error } = await supabase.from('training_logs').insert([logData]); 
       if (error) throw error;
     } catch (err) {
-      // 網路斷線或資料庫異常時，啟動非同步容錯機制
       console.warn("⚠️ 網路異常，訓練紀錄暫存至邊緣端 LocalStorage");
       const offlineKey = 'aura_offline_logs';
       const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
@@ -366,7 +380,6 @@ export default function EyeComfortApp() {
     const todayCycles = parseInt(localStorage.getItem(`rehab_cycles_${todayStr}`) || '0', 10);
     setCalendarData({ todayCycles, monthCycles, days, today: todayDate, year, month });
 
-    // 專利引擎：動態處方
     let newPrescription = { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 };
     if (monthCycles >= 3) { newPrescription = { level: 2, stretchSpeed: 1.0, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60 }; }
     if (monthCycles >= 7) { newPrescription = { level: 3, stretchSpeed: 1.3, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75 }; }
@@ -417,7 +430,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (WebXR 空間運算升級版)
+  // Three.js 引擎與動畫
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -428,10 +441,8 @@ export default function EyeComfortApp() {
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); 
     renderer.setSize(window.innerWidth, window.innerHeight);
     
-    // 【強化點三】啟用 WebXR 空間運算支援
     renderer.xr.enabled = true;
     const vrButton = VRButton.createButton(renderer);
-    // 自訂 VR 按鈕樣式，讓它浮動在 UI 上層
     vrButton.style.position = 'absolute';
     vrButton.style.bottom = '20px';
     vrButton.style.left = '50%';
@@ -439,10 +450,8 @@ export default function EyeComfortApp() {
     vrButton.style.zIndex = '9999';
     canvasRef.current.appendChild(renderer.domElement); 
 
-    // 【新增】檢查當下設備是否支援 WebXR VR 模式
     if ('xr' in navigator) {
       (navigator as any).xr.isSessionSupported('immersive-vr').then((supported: boolean) => {
-        // 如果支援（例如用 Vision Pro 或 Quest 開啟），才把按鈕加進畫面
         if (supported && canvasRef.current) {
           canvasRef.current.appendChild(vrButton);
         }
@@ -542,7 +551,6 @@ export default function EyeComfortApp() {
       }
     };
 
-    // 【修改】將動畫引擎轉由 WebXR 的 setAnimationLoop 接管
     let lastRenderTime = performance.now();
 
     const animate = () => {
@@ -643,7 +651,6 @@ export default function EyeComfortApp() {
       renderer.render(scene, camera);
     };
     
-    // 【修改】透過 WebXR 機制設定迴圈
     renderer.setAnimationLoop(animate);
     
     const handleResize = () => { 
@@ -655,7 +662,6 @@ export default function EyeComfortApp() {
     
     return () => { 
       window.removeEventListener('resize', handleResize); 
-      // 【修改】清理時解除 AnimationLoop
       renderer.setAnimationLoop(null); 
       if (canvasRef.current) {
         if (canvasRef.current.contains(renderer.domElement)) canvasRef.current.removeChild(renderer.domElement); 
@@ -666,7 +672,7 @@ export default function EyeComfortApp() {
   }, [playDingSound]); 
 
   // ==========================================
-  // 計時器邏輯
+  // 計時器邏輯與 UI 位置更新
   // ==========================================
   const updateUI = useCallback(() => {
     const state = gameState.current;
@@ -678,38 +684,38 @@ export default function EyeComfortApp() {
     );
 
     if (state.module === 'sop') {
-      if (state.phase === 'COMPLETED') setUiState({ top: '35%', title: "🎉 3 回合深層放鬆完成！", timer: completionReminder, showContinue: false, showInput: false });
-      else if (state.phase === 'LOOKING') setUiState({ top: '70%', title: <div className="text-center w-full">{`(第 ${state.cycle}/${maxCycles} 回合)`}<br/>請柔和注視中心橘點</div>, timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false, showInput: false });
-      else if (state.phase === 'CLOSING') setUiState({ top: '70%', title: "請用力閉上雙眼，徹底放鬆", timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false, showInput: false });
+      if (state.phase === 'COMPLETED') setUiState({ position: 'CENTER', title: "🎉 3 回合深層放鬆完成！", timer: completionReminder, showContinue: false, showInput: false });
+      else if (state.phase === 'LOOKING') setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">{`(第 ${state.cycle}/${maxCycles} 回合)`}<br/>請柔和注視中心橘點</div>, timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false, showInput: false });
+      else if (state.phase === 'CLOSING') setUiState({ position: 'BOTTOM', title: "請用力閉上雙眼，徹底放鬆", timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false, showInput: false });
     } else if (state.module === 'stretch') {
-      if (state.stretchTimeLeft > 0) setUiState({ top: '80%', title: <div className="text-center w-full">保持頭部靜止<br/>跟隨光球移動伸展眼肌</div>, timer: `剩餘 ${state.stretchTimeLeft} 秒`, showContinue: false, showInput: false });
-      else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
-      else setUiState({ top: '50%', title: "🎉 眼肌與焦距重訓完成！", timer: completionReminder, showContinue: false, showInput: false });
+      if (state.stretchTimeLeft > 0) setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">保持頭部靜止<br/>跟隨光球移動伸展眼肌</div>, timer: `剩餘 ${state.stretchTimeLeft} 秒`, showContinue: false, showInput: false });
+      else if (state.isResting) setUiState({ position: 'CENTER', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
+      else setUiState({ position: 'CENTER', title: "🎉 眼肌與焦距重訓完成！", timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'chaser') {
-      if (state.chaserTimeLeft > 0) setUiState({ top: '80%', title: <div className="text-center w-full">【睫狀肌深空追光】<br/>死盯流星飛向最深處直到消失<br/>(已追蹤: {state.chaserScore} 顆)</div>, timer: `遊戲剩餘：${state.chaserTimeLeft} 秒`, showContinue: false, showInput: false });
-      else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
-      else setUiState({ top: '50%', title: <div className="text-center w-full">🎮 遊戲結束！<br/>您成功追蹤了 {state.chaserScore} 顆深空流星</div>, timer: completionReminder, showContinue: false, showInput: false });
+      if (state.chaserTimeLeft > 0) setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">【睫狀肌深空追光】<br/>死盯流星飛向最深處直到消失<br/>(已追蹤: {state.chaserScore} 顆)</div>, timer: `遊戲剩餘：${state.chaserTimeLeft} 秒`, showContinue: false, showInput: false });
+      else if (state.isResting) setUiState({ position: 'CENTER', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
+      else setUiState({ position: 'CENTER', title: <div className="text-center w-full">🎮 遊戲結束！<br/>您成功追蹤了 {state.chaserScore} 顆深空流星</div>, timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'breathe') {
       if (state.breatheTimeLeft > 0) {
         const action = state.breathPhase === 'INHALE' ? "跟隨星雲【緩慢吸氣】" : "跟隨星雲【徹底吐氣】";
-        setUiState({ top: '85%', title: <div className="text-center w-full">{action}<br/>(請不要對焦任何星星，放寬視野)</div>, timer: `深度放鬆中：${state.breatheTimeLeft} 秒`, showContinue: false, showInput: false });
-      } else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
-      else setUiState({ top: '50%', title: "🌌 視覺神經與自律神經已深度重置", timer: completionReminder, showContinue: false, showInput: false });
+        setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">{action}<br/>(請不要對焦任何星星，放寬視野)</div>, timer: `深度放鬆中：${state.breatheTimeLeft} 秒`, showContinue: false, showInput: false });
+      } else if (state.isResting) setUiState({ position: 'CENTER', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
+      else setUiState({ position: 'CENTER', title: "🌌 視覺神經與自律神經已深度重置", timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'focus') {
-      if (state.isWaitingForRightEye) setUiState({ top: '70%', title: <div className="text-center w-full text-[#00ffcc] mb-2">👁️ 左眼訓練完成！<br/>請換遮左眼，準備進行【右眼】重訓</div>, timer: '', showContinue: true, showInput: false });
+      if (state.isWaitingForRightEye) setUiState({ position: 'CENTER', title: <div className="text-center w-full text-[#00ffcc] mb-2">👁️ 左眼訓練完成！<br/>請換遮左眼，準備進行【右眼】重訓</div>, timer: '', showContinue: true, showInput: false });
       else if (state.focusTimeLeft > 0) {
         const eye = state.focusTimeLeft > 60 ? "👁️ 請遮住右眼，訓練【左眼】" : "👁️ 換遮左眼，訓練【右眼】";
-        setUiState({ top: '85%', title: <div className="w-full flex flex-col items-center justify-center text-center"><div className="text-[#00ffcc] mb-3">{eye}</div>{focusTexts[state.focusStep]}</div>, timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false, showInput: false });
-      } else if (state.isResting) setUiState({ top: '50%', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
-      else setUiState({ top: '45%', title: <div className="w-full text-center flex flex-col items-center">🎯 睫狀肌幫浦重訓完成！<br/><br/><span className="text-[18px] text-[#FFD93D]">⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br/>建議接著進行前四個眼睛放鬆模組。</span></div>, timer: completionReminder, showContinue: false, showInput: false });
+        setUiState({ position: 'BOTTOM', title: <div className="w-full flex flex-col items-center justify-center text-center"><div className="text-[#00ffcc] mb-3">{eye}</div>{focusTexts[state.focusStep]}</div>, timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false, showInput: false });
+      } else if (state.isResting) setUiState({ position: 'CENTER', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
+      else setUiState({ position: 'CENTER', title: <div className="w-full text-center flex flex-col items-center">🎯 睫狀肌幫浦重訓完成！<br/><br/><span className="text-[18px] text-[#FFD93D]">⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br/>建議接著進行前四個眼睛放鬆模組。</span></div>, timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'amsler' || state.module === 'astigmatism') {
       if (state.testPhase === 'LEFT_EYE_TEST' || state.testPhase === 'RIGHT_EYE_TEST') {
         const eye = state.testPhase === 'LEFT_EYE_TEST' ? "左眼" : "右眼"; const cover = state.testPhase === 'LEFT_EYE_TEST' ? "右眼" : "左眼";
         const desc = state.module === 'amsler' ? "(觀察周圍網格是否扭曲或有黑影)" : "(觀察線條是否有些特別黑粗、或模糊發淡？)";
-        setUiState({ top: '80%', title: <div className="text-center w-full">【檢測{eye}】請遮住{cover}，注視中心<br/>{desc}</div>, timer: `檢測中：${state.testTimeLeft} 秒`, showContinue: false, showInput: false });
+        setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">【檢測{eye}】請遮住{cover}，注視中心<br/>{desc}</div>, timer: `檢測中：${state.testTimeLeft} 秒`, showContinue: false, showInput: false });
       } else if (state.testPhase === 'LEFT_EYE_INPUT' || state.testPhase === 'RIGHT_EYE_INPUT') {
         const eye = state.testPhase === 'LEFT_EYE_INPUT' ? "左眼" : "右眼";
-        setUiState({ top: '75%', title: <div className="text-center w-full text-[#FFD93D]">請回報您【{eye}】的視覺感受</div>, timer: '', showContinue: false, showInput: true });
+        setUiState({ position: 'CENTER', title: <div className="text-center w-full text-[#FFD93D]">請回報您【{eye}】的視覺感受</div>, timer: '', showContinue: false, showInput: true });
       }
     }
   }, []);
@@ -792,9 +798,6 @@ export default function EyeComfortApp() {
     return () => clearInterval(timerId);
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
-  // ==========================================
-  // 視圖切換與按鈕處理
-  // ==========================================
   const startTraining = (type: string) => {
     if (audioRef.current.ctx?.state === 'suspended') { audioRef.current.ctx.resume(); }
 
@@ -830,7 +833,10 @@ export default function EyeComfortApp() {
   };
 
   const returnToDashboard = () => {
-    if (['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(gameState.current.module)) { stopBGM(); stopEyeTracking(); }
+    if (['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(gameState.current.module)) { 
+      stopBGM(); 
+      stopEyeTracking(); 
+    }
     gameState.current.module = 'DASHBOARD'; 
     engineRef.current?.stop();
     if (noSleepRef.current) noSleepRef.current.disable();
@@ -839,6 +845,18 @@ export default function EyeComfortApp() {
 
   const showModuleIntro = (type: string) => { setActiveModule(type); setCurrentView('INFO_INTRO'); };
 
+  const handleModuleAccess = (type: string, isIntro: boolean = false) => {
+    if (!isPremiumUnlocked) {
+      setShowRedeemModal(true);
+      return;
+    }
+    if (isIntro) {
+      showModuleIntro(type);
+    } else {
+      startTraining(type);
+    }
+  };
+
   // ==========================================
   // React JSX 渲染樹
   // ==========================================
@@ -846,7 +864,6 @@ export default function EyeComfortApp() {
     <div className="relative w-screen h-screen overflow-hidden bg-[#0f141e] font-sans">
       <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
 
-      {/* 視圖 1: 大廳 (DASHBOARD) */}
       {currentView === 'DASHBOARD' && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-start py-10 px-5 overflow-y-auto box-border">
           <h1 className="text-[#fffdd0] text-[32px] text-center mb-[15px] tracking-[1px]"><div className="text-[55px] mb-[10px]">👁️</div>Aura EyeGym</h1>
@@ -857,7 +874,6 @@ export default function EyeComfortApp() {
             )}
           </p>
 
-          {/* 專利實作：動態 AI 處方展示 UI */}
           <div className="bg-[#162b2b] border border-[#00ffcc] rounded-lg p-3 mb-[30px] w-full max-w-[800px] text-center shadow-[0_0_10px_rgba(0,255,204,0.2)]">
             <p className="text-[#00ffcc] text-[14px] m-0 mb-1">🤖 邊緣運算自適應引擎啟動中</p>
             <p className="text-[#fffdd0] text-[16px] m-0 font-bold">為您生成的動態數位處方：強度 Level {aiPrescriptionLevel}</p>
@@ -873,15 +889,23 @@ export default function EyeComfortApp() {
               <h3 className="text-[#4D96FF] text-[22px] mb-2 font-bold">📅 每日/每月復健進度</h3>
               <p className="text-[#8b9bb4] text-[16px] m-0">點擊查看您的打卡紀錄，分享給家人與醫師</p>
             </div>
+
+            {!isPremiumUnlocked && (
+              <div className="w-full bg-[#2a1f1a] border-2 border-[#ff4d4d] rounded-xl p-5 mb-5 shadow-[0_0_15px_rgba(255,77,77,0.2)] flex flex-col items-center">
+                <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-2">🔒 啟動完整醫療級復健療程</h3>
+                <p className="text-[#d1b0b0] text-[15px] text-center mb-4">請輸入診所開立之 30 天數位護眼計畫授權碼，解鎖全套模組。</p>
+                <button onClick={() => setShowRedeemModal(true)} className="px-6 py-3 bg-[#ff4d4d] text-white font-bold rounded-full w-full max-w-[300px]">🎟️ 輸入處方授權碼</button>
+              </div>
+            )}
             
             <div className="flex flex-col gap-5 w-full">
-              <ModuleCard title="🚀 45秒快速舒緩" desc="結合遠眺聚焦、隨機白球衝擊與深層閉眼潤滑。" color="#FF6B6B" onClick={() => showModuleIntro('sop')} />
-              <ModuleCard title="🔄 動態 3D 眼肌伸展" desc="引導眼球進行 ∞ 字型極限軌跡，強迫拉伸控制眼球的六條眼外肌。" color="#4D96FF" onClick={() => showModuleIntro('stretch')} />
-              <ModuleCard title="🎮 睫狀肌深空追光" desc="【放鬆遊戲】死盯流星飛向深空，強迫睫狀肌徹底看遠放鬆。" color="#6BCB77" onClick={() => showModuleIntro('chaser')} />
-              <ModuleCard title="🌌 星雲散焦與神經放鬆" desc="【深度冥想】釋放隧道視覺，同步 3D 粒子星雲進行共振呼吸。" color="#FFD93D" onClick={() => showModuleIntro('breathe')} />
-              <ModuleCard title="🎯 Z 軸遠近對焦飛梭" desc="高強度睫狀肌重訓！利用極端遠近切換，恢復眼球對焦彈性。" color="#FF3366" onClick={() => showModuleIntro('focus')} />
-              <ModuleCard title="🔍 互動式黃斑部評估" desc="專利級數位化阿姆斯勒方格表，包含左右眼自適應風險運算。" color="#9D4EDD" onClick={() => startTraining('amsler')} />
-              <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛在散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => startTraining('astigmatism')} />
+              <ModuleCard title="🚀 45秒快速舒緩" desc="結合遠眺聚焦、隨機白球衝擊與深層閉眼潤滑。" color="#FF6B6B" onClick={() => handleModuleAccess('sop', true)} isLocked={!isPremiumUnlocked} />
+              <ModuleCard title="🔄 動態 3D 眼肌伸展" desc="引導眼球進行 ∞ 字型極限軌跡，強迫拉伸控制眼球的六條眼外肌。" color="#4D96FF" onClick={() => handleModuleAccess('stretch', true)} isLocked={!isPremiumUnlocked} />
+              <ModuleCard title="🎮 睫狀肌深空追光" desc="【放鬆遊戲】死盯流星飛向深空，強迫睫狀肌徹底看遠放鬆。" color="#6BCB77" onClick={() => handleModuleAccess('chaser', true)} isLocked={!isPremiumUnlocked} />
+              <ModuleCard title="🌌 星雲散焦與神經放鬆" desc="【深度冥想】釋放隧道視覺，同步 3D 粒子星雲進行共振呼吸。" color="#FFD93D" onClick={() => handleModuleAccess('breathe', true)} isLocked={!isPremiumUnlocked} />
+              <ModuleCard title="🎯 Z 軸遠近對焦飛梭" desc="高強度睫狀肌重訓！利用極端遠近切換，恢復眼球對焦彈性。" color="#FF3366" onClick={() => handleModuleAccess('focus', true)} isLocked={!isPremiumUnlocked} />
+              <ModuleCard title="🔍 互動式黃斑部評估" desc="專利級數位化阿姆斯勒方格表，包含左右眼自適應風險運算。" color="#9D4EDD" onClick={() => handleModuleAccess('amsler', false)} isLocked={!isPremiumUnlocked} />
+              <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛在散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => handleModuleAccess('astigmatism', false)} isLocked={!isPremiumUnlocked} />
             </div>
 
             <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02] mt-2">
@@ -892,7 +916,6 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 2, 2.5, 3, 4, 5: 衛教與介紹頁面 */}
       {currentView === 'INFO_NUTRIENT' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
           <div className="max-w-[800px] mx-auto pb-[50px]">
@@ -1056,19 +1079,21 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 視圖 6: 訓練進行中 (TRAINING) 與 互動回饋 */}
       {currentView === 'TRAINING' && (
         <>
           <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
           
-          {/* AI 畫中畫校正窗 (PIP) */}
+          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20 flex items-center justify-center gap-2 bg-[#1a2233]/70 border border-[#2a3a5a] px-4 py-2 rounded-full backdrop-blur-md pointer-events-none drop-shadow-lg opacity-80">
+            <span className="text-[18px]">🔄</span>
+            <span className="text-[#8b9bb4] text-[14px] font-bold tracking-wide">支援橫豎螢幕轉向</span>
+          </div>
+
           {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
             <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none">
               <video ref={videoRef} className="w-full h-full object-cover transform scale-x-[-1]" playsInline muted autoPlay />
             </div>
           )}
 
-          {/* 載入中全螢幕等待畫面 */}
           {trackingState === 'INITIALIZING' && (
             <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
               <div className="text-[60px] mb-4 animate-spin">⏳</div>
@@ -1079,7 +1104,6 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 距離過近警告 */}
           {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">🛑</div>
@@ -1090,7 +1114,6 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 失去追蹤的防呆紅屏警告 */}
           {trackingState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
             <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
               <div className="text-[60px] mb-4">⚠️</div>
@@ -1101,7 +1124,20 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          <div className="absolute inset-x-0 w-full px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10 transition-all duration-[1.2s] ease-[cubic-bezier(0.25,1,0.5,1)]" style={{ top: uiState.top, transform: 'translateY(-50%)' }}>
+          <div 
+            className="absolute px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10" 
+            style={{
+              transition: 'all 1.2s cubic-bezier(0.25,1,0.5,1)',
+              ...(isLandscape
+                ? uiState.position === 'CENTER'
+                  ? { top: '50%', right: '50%', transform: 'translate(50%, -50%)', width: '80%' }
+                  : { top: '45%', right: '2%', transform: 'translate(0%, -50%)', width: '42%' }
+                : uiState.position === 'CENTER'
+                  ? { top: '45%', right: '50%', transform: 'translate(50%, -50%)', width: '100%' }
+                  : { top: '75%', right: '50%', transform: 'translate(50%, -50%)', width: '100%' }
+              )
+            }}
+          >
             <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] flex flex-col items-center justify-center">{uiState.title}</div>
             <div className="w-full text-center text-[#00ffcc] font-mono text-[24px] mb-[20px]">{uiState.timer}</div>
             
@@ -1119,7 +1155,6 @@ export default function EyeComfortApp() {
         </>
       )}
 
-      {/* 視圖 7: 測試評估報告 (TEST_REPORT) */}
       {currentView === 'TEST_REPORT' && (
         <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border flex flex-col items-center justify-center">
           <div className="w-full max-w-[600px] bg-[#1a2233] p-8 rounded-2xl border-2 border-[#9D4EDD] shadow-[0_0_25px_rgba(157,78,221,0.3)] mt-[80px] mb-[40px]">
@@ -1137,14 +1172,41 @@ export default function EyeComfortApp() {
           </div>
         </div>
       )}
+
+      {showRedeemModal && (
+        <div className="absolute inset-0 z-[100] bg-black/80 flex items-center justify-center p-5 backdrop-blur-sm">
+          <div className="bg-[#1a2233] border-2 border-[#00ffcc] p-6 rounded-2xl w-full max-w-[400px] shadow-[0_0_25px_rgba(0,255,204,0.3)] text-center">
+            <h3 className="text-[#fffdd0] text-[22px] font-bold mb-3">🎟️ 輸入數位處方授權碼</h3>
+            <p className="text-[#8b9bb4] text-[14px] mb-4">請輸入診所配發之 12 碼專屬序號 (測試碼: EYE-A8F2-99B1)</p>
+            <input 
+              type="text" 
+              placeholder="例如: EYE-XXXX-XXXX" 
+              value={redeemCode}
+              onChange={(e) => setRedeemCode(e.target.value)}
+              className="w-full p-3 bg-[#0f141e] border border-[#2a3a5a] text-[#fffdd0] rounded-xl text-center text-[18px] mb-5 outline-none focus:border-[#00ffcc]"
+            />
+            <div className="flex gap-3">
+              <button onClick={() => setShowRedeemModal(false)} className="flex-1 py-3 bg-[#2a3241] text-[#8b9bb4] font-bold rounded-xl">取消</button>
+              <button onClick={handleRedeemCode} className="flex-1 py-3 bg-[#00ffcc] text-[#0f141e] font-bold rounded-xl">確認解鎖</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function ModuleCard({ title, desc, color, onClick }: { title: string, desc: string, color: string, onClick: () => void }) {
+function ModuleCard({ title, desc, color, onClick, isLocked = false }: { title: string, desc: string, color: string, onClick: () => void, isLocked?: boolean }) {
   return (
-    <div onClick={onClick} className="bg-[#1a2233] rounded-xl p-[24px_20px] cursor-pointer w-full box-border transition-transform hover:scale-[1.01]" style={{ border: `2px solid ${color}` }}>
-      <h3 className="text-[#fffdd0] text-[22px] mb-3 font-bold">{title}</h3>
+    <div 
+      onClick={onClick} 
+      className={`relative bg-[#1a2233] rounded-xl p-[24px_20px] cursor-pointer w-full box-border transition-transform hover:scale-[1.01] ${isLocked ? 'opacity-60 grayscale-[50%]' : ''}`} 
+      style={{ border: `2px solid ${color}` }}
+    >
+      <div className="flex justify-between items-center mb-3">
+        <h3 className="text-[#fffdd0] text-[22px] font-bold m-0">{title}</h3>
+        {isLocked && <span className="text-[24px]">🔒</span>}
+      </div>
       <p className="text-[#8b9bb4] text-[16px] leading-[1.6] m-0">{desc}</p>
     </div>
   );

@@ -174,9 +174,8 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
-            // 【核心修正 1：追蹤敏感度】黃金平衡點 1.9，不會太容易警示，也不會太遲鈍
-            const threshold = isEffectiveLandscape ? 1.9 : 1.6;
+            // 【核心修正】將閾值指定為 2.1 測試，適用於所有模式
+            const threshold = 2.1;
             
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
@@ -616,7 +615,7 @@ export default function EyeComfortApp() {
 
       const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
 
-      // 3D 鏡頭智慧平移 
+      // 3D 鏡頭智慧平移 (解決文字與星球重疊問題)
       const targetCamX = isEffectiveLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
       camera.lookAt(camera.position.x, 0, -100);
@@ -651,8 +650,7 @@ export default function EyeComfortApp() {
         gameState.current.stretchAngle += (0.025 * gameState.current.prescription.stretchSpeed); 
         const speed = gameState.current.stretchAngle; 
         
-        // 【核心修正 2：徹底消滅廣角畸變】
-        // 鎖定 Z 軸不移動，絕對不會產生邊緣透視變形
+        // 永遠鎖定 Z 軸為 -40，絕對不會產生邊緣透視變形
         const currentZ = -40; 
         const distToCamera = camera.position.z - currentZ;
         const vFovRad = (camera.fov * Math.PI) / 180;
@@ -667,14 +665,17 @@ export default function EyeComfortApp() {
         
         if (isEffectiveLandscape) {
             centerX = camera.position.x - edgeX * 0.15; 
-            ampX = edgeX * 0.55; // 限縮軌跡範圍在 55%
+            ampX = edgeX * 0.55; 
         }
         
         const ampY = Math.min(edgeY * 0.6, 12); 
         
-        // 【核心修正 2】完全依賴 Scale 模擬飛近，保證球體永遠是正圓形！
-        const depthScale = Math.sin(speed * 0.5) * 0.6; // 產生 0.4x ~ 1.6x 的縮放感
-        stretchOrb.scale.setScalar(1 + depthScale + Math.cos(speed * 3) * 0.1);
+        // 【核心修正】反向透視放大法
+        // 利用 Sin 波段 (-1 to 1) 轉換為極致的實體放大倍率 (0.7x 到 2.2x)
+        // 在最遠處小而深邃，飛到眼前時完美膨脹 3 倍大，且 100% 保持正圓形
+        const depthFactor = Math.sin(speed * 0.5); 
+        const scaleVal = 1.45 + depthFactor * 0.75; 
+        stretchOrb.scale.setScalar(scaleVal + Math.cos(speed * 3) * 0.1);
         
         stretchOrb.position.set(centerX + Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, currentZ);
       }
@@ -958,7 +959,6 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【核心絕對佈局運算】：取代會擠壓的 Flexbox
   const isNativeLandscape = dim.w > dim.h;
   const activeAngle = isNativeLandscape ? 0 : deviceUiAngle;
   
@@ -969,11 +969,7 @@ export default function EyeComfortApp() {
   const autoCamCompensation = activeAngle === 90 ? -90 : activeAngle === -90 ? 90 : 0;
   const finalCamRotation = (manualCamAngle + autoCamCompensation) % 360;
 
-  // ==========================================
-  // React JSX 渲染樹
-  // ==========================================
   return (
-    // 外層鎖定不准動，內層純 absolute 定位，免疫 Flexbox 壓縮錯誤！
     <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none">
       <div 
         className="absolute"

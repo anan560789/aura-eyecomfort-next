@@ -53,6 +53,9 @@ export default function EyeComfortApp() {
 
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
   const [isLandscape, setIsLandscape] = useState<boolean>(false);
+  
+  // 【新增】手動控制畫面轉向狀態 (解決 LIFF 鎖定直式的痛點)
+  const [isRotated, setIsRotated] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
@@ -68,15 +71,22 @@ export default function EyeComfortApp() {
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
-    prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 } 
+    prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
+    isRotated: false // 同步給底層引擎使用
   });
 
   useEffect(() => {
-    const handleResize = () => setIsLandscape(window.innerWidth > window.innerHeight);
-    window.addEventListener('resize', handleResize);
-    handleResize();
-    return () => window.removeEventListener('resize', handleResize);
+    const handleOrientationChange = () => setIsLandscape(window.innerWidth > window.innerHeight);
+    window.addEventListener('resize', handleOrientationChange);
+    handleOrientationChange();
+    return () => window.removeEventListener('resize', handleOrientationChange);
   }, []);
+
+  // 當手動旋轉狀態改變時，通知底層 3D 引擎更新長寬比
+  useEffect(() => {
+    gameState.current.isRotated = isRotated;
+    window.dispatchEvent(new Event('resize'));
+  }, [isRotated]);
 
   useEffect(() => {
     const unlocked = localStorage.getItem('aura_premium_unlocked') === 'true';
@@ -653,10 +663,14 @@ export default function EyeComfortApp() {
     
     renderer.setAnimationLoop(animate);
     
+    // 【修改】當執行手動虛擬旋轉時，將渲染引擎的尺寸改為反向注入 (寬高互換)
     const handleResize = () => { 
-      camera.aspect = window.innerWidth / window.innerHeight; 
+      const isForced = gameState.current.isRotated && !(window.innerWidth > window.innerHeight);
+      const w = isForced ? window.innerHeight : window.innerWidth;
+      const h = isForced ? window.innerWidth : window.innerHeight;
+      camera.aspect = w / h; 
       camera.updateProjectionMatrix(); 
-      renderer.setSize(window.innerWidth, window.innerHeight); 
+      renderer.setSize(w, h); 
     };
     window.addEventListener('resize', handleResize);
     
@@ -838,6 +852,7 @@ export default function EyeComfortApp() {
       stopEyeTracking(); 
     }
     gameState.current.module = 'DASHBOARD'; 
+    setIsRotated(false); // 重置旋轉狀態
     engineRef.current?.stop();
     if (noSleepRef.current) noSleepRef.current.disable();
     setCurrentView('DASHBOARD'); setActiveModule(null);
@@ -857,12 +872,29 @@ export default function EyeComfortApp() {
     }
   };
 
+  // 判斷是否啟動虛擬轉向引擎 (僅在直立螢幕且使用者點擊旋轉時觸發)
+  const applyForcedRotation = !isLandscape && isRotated;
+  // 無論是硬體自動轉向還是軟體強制轉向，都會觸發橫置排版邏輯
+  const effectiveLandscape = isLandscape || isRotated;
+
   // ==========================================
   // React JSX 渲染樹
   // ==========================================
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#0f141e] font-sans">
-      <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
+      {/* 獨立包裝的 3D 畫布層：與介面同步旋轉並自動裁切，完美適應新視野 */}
+      <div 
+        className="absolute z-0 pointer-events-none flex items-center justify-center"
+        style={{
+          top: '50%', left: '50%',
+          transform: `translate(-50%, -50%) ${applyForcedRotation ? 'rotate(90deg)' : 'none'}`,
+          width: applyForcedRotation ? '100vh' : '100vw',
+          height: applyForcedRotation ? '100vw' : '100vh',
+          transition: 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)'
+        }}
+      >
+        <div ref={canvasRef} className="w-full h-full" />
+      </div>
 
       {currentView === 'DASHBOARD' && (
         <div className="absolute inset-0 z-10 flex flex-col items-center justify-start py-10 px-5 overflow-y-auto box-border">
@@ -1079,80 +1111,105 @@ export default function EyeComfortApp() {
         </div>
       )}
 
+      {/* 獨立包裝的動態 UI 層：當觸發虛擬旋轉時，這層會跟隨 3D 畫布一起轉動 90 度 */}
       {currentView === 'TRAINING' && (
-        <>
-          <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
-          
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 z-20 flex items-center justify-center gap-2 bg-[#1a2233]/70 border border-[#2a3a5a] px-4 py-2 rounded-full backdrop-blur-md pointer-events-none drop-shadow-lg opacity-80">
-            <span className="text-[18px]">🔄</span>
-            <span className="text-[#8b9bb4] text-[14px] font-bold tracking-wide">支援橫豎螢幕轉向</span>
-          </div>
-
-          {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
-            <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none">
-              <video ref={videoRef} className="w-full h-full object-cover transform scale-x-[-1]" playsInline muted autoPlay />
-            </div>
-          )}
-
-          {trackingState === 'INITIALIZING' && (
-            <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
-              <div className="text-[60px] mb-4 animate-spin">⏳</div>
-              <h2 className="text-[#00ffcc] text-[28px] font-bold mb-4 tracking-widest">AI 視覺引擎載入中</h2>
-              <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                正在啟動前置鏡頭與安全辨識模組...<br/>這可能需要幾秒鐘的時間，請稍候。
-              </p>
-            </div>
-          )}
-
-          {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
-            <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
-              <div className="text-[60px] mb-4">🛑</div>
-              <h2 className="text-[#E5B55E] text-[28px] font-bold mb-4 tracking-widest">距離螢幕太近</h2>
-              <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                訓練與時間已自動暫停。<br/>請退後至 <strong className="text-[#00ffcc]">20 公分安全距離</strong> 外。
-              </p>
-            </div>
-          )}
-
-          {trackingState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
-            <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
-              <div className="text-[60px] mb-4">⚠️</div>
-              <h2 className="text-[#ff4d4d] text-[28px] font-bold mb-4 tracking-widest">頭部偏離或失去視線</h2>
-              <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                訓練與時間已暫停。<br/>請確保<strong className="text-[#E5B55E]">臉部正對螢幕</strong>。
-              </p>
-            </div>
-          )}
-
-          <div 
-            className="absolute px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10" 
+        <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <div
+            className="relative pointer-events-none"
             style={{
-              transition: 'all 1.2s cubic-bezier(0.25,1,0.5,1)',
-              ...(isLandscape
-                ? uiState.position === 'CENTER'
-                  ? { top: '50%', right: '50%', transform: 'translate(50%, -50%)', width: '80%' }
-                  : { top: '45%', right: '2%', transform: 'translate(0%, -50%)', width: '42%' }
-                : uiState.position === 'CENTER'
-                  ? { top: '45%', right: '50%', transform: 'translate(50%, -50%)', width: '100%' }
-                  : { top: '75%', right: '50%', transform: 'translate(50%, -50%)', width: '100%' }
-              )
+              width: applyForcedRotation ? '100vh' : '100vw',
+              height: applyForcedRotation ? '100vw' : '100vh',
+              transform: applyForcedRotation ? 'rotate(90deg)' : 'none',
+              transition: 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)'
             }}
           >
-            <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] flex flex-col items-center justify-center">{uiState.title}</div>
-            <div className="w-full text-center text-[#00ffcc] font-mono text-[24px] mb-[20px]">{uiState.timer}</div>
             
-            {uiState.showInput && (
-              <div className="flex flex-col gap-4 w-full max-w-[300px] pointer-events-auto mt-4">
-                <button onClick={() => handleDiagnosticInput('NORMAL')} className="w-full py-4 bg-[#162b2b] border-2 border-[#00ffcc] text-[#00ffcc] rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.3)]">✅ 正常 (清晰無異常)</button>
-                <button onClick={() => handleDiagnosticInput('ABNORMAL')} className="w-full py-4 bg-[#2b1616] border-2 border-[#ff4d4d] text-[#ff4d4d] rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_0_15px_rgba(255,77,77,0.3)]">❌ 異常 (有扭曲/模糊/黑影)</button>
+            {/* 左上角：返回按鈕 */}
+            <button 
+              onClick={returnToDashboard} 
+              className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer pointer-events-auto shadow-lg z-20"
+            >
+              🔙 返回大廳
+            </button>
+
+            {/* 右上角：轉向按鈕 (完全避開左上角的返回按鈕) */}
+            <button
+               onClick={() => setIsRotated(!isRotated)}
+               className="absolute top-5 right-5 z-20 flex items-center justify-center gap-2 bg-[#1a2233]/70 border border-[#2a3a5a] px-4 py-2 rounded-full backdrop-blur-md pointer-events-auto shadow-lg text-[#8b9bb4] hover:text-white transition-colors"
+            >
+              <span className="text-[18px]">🔄</span>
+              <span className="text-[14px] font-bold tracking-wide">支援螢幕轉向</span>
+            </button>
+
+            {/* 右下角：AI 防呆相機 */}
+            {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
+              <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none">
+                <video ref={videoRef} className="w-full h-full object-cover transform scale-x-[-1]" playsInline muted autoPlay />
               </div>
             )}
-            
-            {uiState.showContinue && (
-              <button onClick={() => { gameState.current.isWaitingForRightEye = false; playDingSound(); setUiState(prev => ({...prev, showContinue: false})); }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
+
+            {/* 系統提示文字層 */}
+            {trackingState === 'INITIALIZING' && (
+              <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
+                <div className="text-[60px] mb-4 animate-spin">⏳</div>
+                <h2 className="text-[#00ffcc] text-[28px] font-bold mb-4 tracking-widest">AI 視覺引擎載入中</h2>
+                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
+                  正在啟動前置鏡頭與安全辨識模組...<br/>這可能需要幾秒鐘的時間，請稍候。
+                </p>
+              </div>
             )}
+
+            {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
+              <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
+                <div className="text-[60px] mb-4">🛑</div>
+                <h2 className="text-[#E5B55E] text-[28px] font-bold mb-4 tracking-widest">距離螢幕太近</h2>
+                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
+                  訓練與時間已自動暫停。<br/>請退後至 <strong className="text-[#00ffcc]">20 公分安全距離</strong> 外。
+                </p>
+              </div>
+            )}
+
+            {trackingState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
+              <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
+                <div className="text-[60px] mb-4">⚠️</div>
+                <h2 className="text-[#ff4d4d] text-[28px] font-bold mb-4 tracking-widest">頭部偏離或失去視線</h2>
+                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
+                  訓練與時間已暫停。<br/>請確保<strong className="text-[#E5B55E]">臉部正對螢幕</strong>。
+                </p>
+              </div>
+            )}
+
+            {/* 主要排版文字層 (支援直橫式動態流動排版) */}
+            <div 
+              className="absolute px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10" 
+              style={{
+                transition: 'all 1.2s cubic-bezier(0.25,1,0.5,1)',
+                ...(effectiveLandscape
+                  ? uiState.position === 'CENTER'
+                    ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '80%' }
+                    : { top: '50%', right: '5%', transform: 'translateY(-50%)', width: '45%' } // 橫置時：向右靠攏
+                  : uiState.position === 'CENTER'
+                    ? { top: '45%', left: '50%', transform: 'translate(-50%, -50%)', width: '100%' }
+                    : { top: '75%', left: '50%', transform: 'translate(-50%, -50%)', width: '100%' } // 直式時：置底
+                )
+              }}
+            >
+              <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] flex flex-col items-center justify-center">{uiState.title}</div>
+              <div className="w-full text-center text-[#00ffcc] font-mono text-[24px] mb-[20px]">{uiState.timer}</div>
+              
+              {uiState.showInput && (
+                <div className="flex flex-col gap-4 w-full max-w-[300px] pointer-events-auto mt-4">
+                  <button onClick={() => handleDiagnosticInput('NORMAL')} className="w-full py-4 bg-[#162b2b] border-2 border-[#00ffcc] text-[#00ffcc] rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.3)]">✅ 正常 (清晰無異常)</button>
+                  <button onClick={() => handleDiagnosticInput('ABNORMAL')} className="w-full py-4 bg-[#2b1616] border-2 border-[#ff4d4d] text-[#ff4d4d] rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_0_15px_rgba(255,77,77,0.3)]">❌ 異常 (有扭曲/模糊/黑影)</button>
+                </div>
+              )}
+              
+              {uiState.showContinue && (
+                <button onClick={() => { gameState.current.isWaitingForRightEye = false; playDingSound(); setUiState(prev => ({...prev, showContinue: false})); }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
+              )}
+            </div>
           </div>
-        </>
+        </div>
       )}
 
       {currentView === 'TEST_REPORT' && (

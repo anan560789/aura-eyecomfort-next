@@ -54,7 +54,8 @@ export default function EyeComfortApp() {
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
   const [camRotation, setCamRotation] = useState<number>(0);
 
-  // 【核心新增】系統主動偵測轉向角度 (0, 90, -90)
+  // 【核心新增】儲存真實螢幕尺寸與陀螺儀轉向狀態
+  const [dim, setDim] = useState({ w: 390, h: 844 });
   const [deviceUiAngle, setDeviceUiAngle] = useState<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -76,6 +77,20 @@ export default function EyeComfortApp() {
   });
 
   useEffect(() => {
+    const updateDim = () => {
+      setDim({ w: window.innerWidth, h: window.innerHeight });
+      // 如果觸發實體螢幕轉向，強制歸零虛擬轉向，防止雙重擠壓！
+      if (window.innerWidth > window.innerHeight) {
+        setDeviceUiAngle(0);
+        gameState.current.deviceUiAngle = 0;
+      }
+    };
+    updateDim();
+    window.addEventListener('resize', updateDim);
+    return () => window.removeEventListener('resize', updateDim);
+  }, []);
+
+  useEffect(() => {
     const unlocked = localStorage.getItem('aura_premium_unlocked') === 'true';
     setIsPremiumUnlocked(unlocked);
   }, []);
@@ -91,16 +106,30 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【核心功能】主動偵測實體陀螺儀並連動 UI 旋轉
+  // 【核心功能】主動偵測實體陀螺儀並連動 UI 旋轉，不需任何按鈕
   const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
-    const gamma = event.gamma; 
-    if (gamma === null || gamma === undefined) return;
-    
+    // 防衝突機制：如果手機「已經解鎖並實體轉為橫向」，絕對不啟用虛擬旋轉
+    if (window.innerWidth > window.innerHeight) {
+      if (gameState.current.deviceUiAngle !== 0) {
+        gameState.current.deviceUiAngle = 0;
+        setDeviceUiAngle(0);
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+      }
+      return;
+    }
+
+    const gamma = event.gamma; // 左右傾斜
+    const beta = event.beta;   // 前後傾斜
+    if (gamma === null || gamma === undefined || beta === null) return;
+
+    // 防止平放在桌面上時的亂翻轉
+    if (Math.abs(beta) < 20 || Math.abs(beta) > 160) return;
+
     let newAngle = gameState.current.deviceUiAngle;
     
-    // gamma 反映手機左右傾斜：大於 50 視為右倒，小於 -50 視為左倒
-    if (gamma > 50) newAngle = -90; 
-    else if (gamma < -50) newAngle = 90; 
+    // gamma 反映手機左右傾斜：大於 45 視為右倒，小於 -45 視為左倒
+    if (gamma > 45) newAngle = -90; 
+    else if (gamma < -45) newAngle = 90; 
     else if (Math.abs(gamma) < 25) newAngle = 0; 
 
     if (newAngle !== gameState.current.deviceUiAngle) {
@@ -152,7 +181,9 @@ export default function EyeComfortApp() {
             isLost = true;
         } else {
             // 橫向模式時放寬判定閾值
-            const threshold = gameState.current.deviceUiAngle !== 0 ? 2.5 : 1.6;
+            const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
+            const threshold = isEffectiveLandscape ? 2.5 : 1.6;
+            
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
             }
@@ -589,8 +620,11 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
-      // 【核心修正】3D 鏡頭智慧平移 (解決文字與星球重疊問題)
-      const targetCamX = gameState.current.deviceUiAngle !== 0 ? 3.5 : 0;
+      // 判斷是否為橫向模式 (實體橫向 或 陀螺儀橫向)
+      const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
+
+      // 3D 鏡頭智慧平移 (解決文字與星球重疊問題)
+      const targetCamX = isEffectiveLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
       camera.lookAt(camera.position.x, 0, -100);
       
@@ -636,9 +670,9 @@ export default function EyeComfortApp() {
         
         // 確保橫向時，軌跡完全包覆在畫面內，絕對不會跑出邊界
         let centerX = camera.position.x;
-        let ampX = edgeX * 0.8; // 直立時保持原樣
+        let ampX = edgeX * 0.8; 
         
-        if (gameState.current.deviceUiAngle !== 0) {
+        if (isEffectiveLandscape) {
             centerX = camera.position.x - edgeX * 0.15; // 稍微向左偏移讓出文字空間
             ampX = edgeX * 0.65; // 強制將軌跡限縮在畫面寬度的 65% 內
         }
@@ -688,16 +722,19 @@ export default function EyeComfortApp() {
     
     renderer.setAnimationLoop(animate);
     
-    // 【核心修正】3D 引擎根據陀螺儀角度重新計算真正的長寬，解決橢圓形畸變！
+    // 【核心修正】3D 引擎自動抓取完美解析度，消滅橢圓畸變與雙重擠壓！
     const handleResize = () => { 
       setTimeout(() => {
         const w = window.innerWidth;
         const h = window.innerHeight;
+        const isNative = w > h;
         const angle = gameState.current.deviceUiAngle;
         
-        // 如果偵測到翻轉，3D 畫布的長寬必須對調來適應 CSS 的旋轉框架
-        const renderW = angle !== 0 ? Math.max(w, h) : Math.min(w, h);
-        const renderH = angle !== 0 ? Math.min(w, h) : Math.max(w, h);
+        // 防衝突機制：如果 OS 已經是原生橫向，長寬就不需要再因為陀螺儀對調！
+        const activeAngle = isNative ? 0 : angle;
+
+        const renderW = activeAngle !== 0 ? h : w;
+        const renderH = activeAngle !== 0 ? w : h;
 
         if (camera) {
           camera.aspect = renderW / renderH; 
@@ -848,7 +885,7 @@ export default function EyeComfortApp() {
     return () => clearInterval(timerId);
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
-  // 【核心新增】點擊訓練模組時，主動請求陀螺儀權限並綁定自動翻轉
+  // 【核心功能】進入訓練時主動請求 iOS 陀螺儀權限，並自動掛載轉向監聽
   const startTrainingWithOrientation = async (type: string) => {
     try {
       if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
@@ -860,7 +897,7 @@ export default function EyeComfortApp() {
         window.addEventListener('deviceorientation', handleDeviceOrientation);
       }
     } catch (error) {
-      console.warn('陀螺儀權限未取得，將使用預設視角');
+      console.warn('陀螺儀權限請求被略過或失敗');
       window.addEventListener('deviceorientation', handleDeviceOrientation);
     }
     startTraining(type);
@@ -908,7 +945,6 @@ export default function EyeComfortApp() {
     }
     gameState.current.module = 'DASHBOARD'; 
     
-    // 【核心清除】返回大廳時移除陀螺儀監聽，並將畫面轉正
     window.removeEventListener('deviceorientation', handleDeviceOrientation);
     setDeviceUiAngle(0);
     gameState.current.deviceUiAngle = 0;
@@ -929,24 +965,33 @@ export default function EyeComfortApp() {
     if (isIntro) {
       showModuleIntro(type);
     } else {
+      // 確保從使用者點擊啟動陀螺儀權限
       startTrainingWithOrientation(type);
     }
   };
+
+  // 統合橫式的最終判定條件，如果原生已經轉向，就不使用虛擬轉向角度
+  const isNativeLandscape = dim.w > dim.h;
+  const activeAngle = isNativeLandscape ? 0 : deviceUiAngle;
+  
+  const containerW = activeAngle !== 0 ? dim.h : dim.w;
+  const containerH = activeAngle !== 0 ? dim.w : dim.h;
+  const isEffectiveLandscape = isNativeLandscape || activeAngle !== 0;
 
   // ==========================================
   // React JSX 渲染樹
   // ==========================================
   return (
-    // 【極致滿版容器】永遠跟隨系統最大化，內部依據陀螺儀反向旋轉
+    // 使用 fixed inset-0 鎖定最外圍版面，阻擋所有原生留白問題
     <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none flex items-center justify-center">
       <div 
         className="relative bg-[#0f141e]"
         style={{
-          width: deviceUiAngle === 0 ? '100vw' : '100vh',
-          height: deviceUiAngle === 0 ? '100vh' : '100vw',
-          transform: `rotate(${deviceUiAngle}deg)`,
+          width: `${containerW}px`,
+          height: `${containerH}px`,
+          transform: `rotate(${activeAngle}deg)`,
           transformOrigin: 'center center',
-          transition: 'transform 0.5s cubic-bezier(0.25, 1, 0.5, 1), width 0.5s ease, height 0.5s ease'
+          transition: 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), width 0.4s ease, height 0.4s ease'
         }}
       >
         <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
@@ -1169,14 +1214,15 @@ export default function EyeComfortApp() {
         {currentView === 'TRAINING' && (
           <>
             <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
+            
+            {/* 已經徹底移除「手動切換轉向按鈕」 */}
 
             {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
               <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
                 <video 
                   ref={videoRef} 
                   className="w-full h-full object-cover transition-transform duration-300" 
-                  // 根據 UI 旋轉自動反向補償相機
-                  style={{ transform: `scaleX(-1) rotate(${(camRotation + (deviceUiAngle === 90 ? -90 : deviceUiAngle === -90 ? 90 : 0)) % 360}deg)` }} 
+                  style={{ transform: `scaleX(-1) rotate(${camRotation}deg)` }} 
                   playsInline 
                   muted 
                   autoPlay 
@@ -1224,7 +1270,7 @@ export default function EyeComfortApp() {
               className="absolute px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10" 
               style={{
                 transition: 'all 0.8s cubic-bezier(0.25,1,0.5,1)',
-                ...(deviceUiAngle !== 0
+                ...(isEffectiveLandscape
                   ? uiState.position === 'CENTER'
                     ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '80%' }
                     : { top: '50%', left: '75%', transform: 'translate(-50%, -50%)', width: '45%' }

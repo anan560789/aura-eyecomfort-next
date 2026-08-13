@@ -52,10 +52,12 @@ export default function EyeComfortApp() {
   const [redeemCode, setRedeemCode] = useState<string>('');
 
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
-  const [manualCamAngle, setManualCamAngle] = useState<number>(0);
 
+  // 【核心狀態】儲存實體長寬與混合式轉向邏輯
   const [dim, setDim] = useState({ w: 0, h: 0 });
-  const [deviceUiAngle, setDeviceUiAngle] = useState<number>(0);
+  const [isSimulatedLandscape, setIsSimulatedLandscape] = useState<boolean>(false);
+  const [activeGyroAngle, setActiveGyroAngle] = useState<number>(90);
+  const gyroAngleRef = useRef<number>(90);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
@@ -72,15 +74,16 @@ export default function EyeComfortApp() {
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
-    deviceUiAngle: 0
+    isSimulatedLandscape: false
   });
 
   useEffect(() => {
     const updateDim = () => {
       setDim({ w: window.innerWidth, h: window.innerHeight });
-      if (window.innerWidth > window.innerHeight) {
-        setDeviceUiAngle(0);
-        gameState.current.deviceUiAngle = 0;
+      // 防衝突機制：使用者解鎖實體翻轉時，關閉虛擬翻轉
+      if (window.innerWidth > window.innerHeight && gameState.current.isSimulatedLandscape) {
+        setIsSimulatedLandscape(false);
+        gameState.current.isSimulatedLandscape = false;
       }
     };
     if (typeof window !== 'undefined') {
@@ -106,34 +109,53 @@ export default function EyeComfortApp() {
     }
   };
 
+  // 【核心機制：持續更新陀螺儀數值，但不自動翻轉】
   const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
-    if (window.innerWidth > window.innerHeight) {
-      if (gameState.current.deviceUiAngle !== 0) {
-        gameState.current.deviceUiAngle = 0;
-        setDeviceUiAngle(0);
-        setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
-      }
-      return;
-    }
-
     const gamma = event.gamma; 
     const beta = event.beta;   
     if (gamma === null || gamma === undefined || beta === null) return;
     
+    // 平放時不亂抓數值
     if (Math.abs(beta) < 20 || Math.abs(beta) > 160) return;
 
-    let newAngle = gameState.current.deviceUiAngle;
+    let newAngle = gyroAngleRef.current;
     
     if (gamma > 45) newAngle = -90; 
     else if (gamma < -45) newAngle = 90; 
-    else if (Math.abs(gamma) < 25) newAngle = 0; 
 
-    if (newAngle !== gameState.current.deviceUiAngle) {
-      gameState.current.deviceUiAngle = newAngle;
-      setDeviceUiAngle(newAngle);
-      setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+    if (newAngle !== gyroAngleRef.current) {
+      gyroAngleRef.current = newAngle;
+      setActiveGyroAngle(newAngle);
+      // 若處於虛擬橫向模式，根據最新方向自動微調
+      if (gameState.current.isSimulatedLandscape) {
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+      }
     }
   }, []);
+
+  // 【手動按鈕切換邏輯】
+  const toggleOrientation = async () => {
+    if (!isSimulatedLandscape) {
+      // 點擊按鈕時才動態請求陀螺儀
+      if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+        try {
+          const permissionState = await (DeviceOrientationEvent as any).requestPermission();
+          if (permissionState === 'granted') {
+            window.addEventListener('deviceorientation', handleDeviceOrientation);
+          }
+        } catch (error) {
+          console.warn('陀螺儀權限請求失敗');
+        }
+      } else {
+        window.addEventListener('deviceorientation', handleDeviceOrientation);
+      }
+    }
+
+    const newVal = !isSimulatedLandscape;
+    setIsSimulatedLandscape(newVal);
+    gameState.current.isSimulatedLandscape = newVal;
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+  };
 
   const startTrackingLoop = useCallback(() => {
     let lostFrames = 0;
@@ -174,7 +196,7 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            // 【全域敏感度 2.1】
+            // 【全域敏感度統一設定為 2.1】
             const threshold = 2.1;
             
             if (!isSopClosing && !requiresCoveringEye) {
@@ -421,7 +443,7 @@ export default function EyeComfortApp() {
     const todayCycles = parseInt(localStorage.getItem(`rehab_cycles_${todayStr}`) || '0', 10);
     setCalendarData({ todayCycles, monthCycles, days, today: todayDate, year, month });
 
-    // 【核心修正：平滑化難度速度】
+    // 【平滑化速度處方】
     let newPrescription = { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 };
     if (monthCycles >= 3) { newPrescription = { level: 2, stretchSpeed: 0.8, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60 }; }
     if (monthCycles >= 7) { newPrescription = { level: 3, stretchSpeed: 1.0, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75 }; }
@@ -614,7 +636,7 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
-      const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
+      const isEffectiveLandscape = gameState.current.isSimulatedLandscape || window.innerWidth > window.innerHeight;
 
       const targetCamX = isEffectiveLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
@@ -625,7 +647,7 @@ export default function EyeComfortApp() {
         focusTarget.rotation.y += 0.003; 
         focusTarget.position.z = -50;
         
-        // 【核心修正：模組一橫向 FOV 補償放大 1.4 倍】
+        // 【模組一動態 FOV 放大補償】
         const baseScale = isEffectiveLandscape ? 1.4 : 1.0;
         const scale = baseScale * (1 + Math.cos(timeDelta) * 0.25); 
         focusTarget.scale.set(scale, scale, scale);
@@ -654,6 +676,7 @@ export default function EyeComfortApp() {
         gameState.current.stretchAngle += (0.025 * gameState.current.prescription.stretchSpeed); 
         const speed = gameState.current.stretchAngle; 
         
+        // Z 軸鎖死 -40 保證絕對不畸變
         const currentZ = -40; 
         const distToCamera = camera.position.z - currentZ;
         const vFovRad = (camera.fov * Math.PI) / 180;
@@ -673,7 +696,7 @@ export default function EyeComfortApp() {
         
         const ampY = Math.min(edgeY * 0.6, 12); 
         
-        // 【核心修正：模組二完美反向透視 3 倍膨脹放大】
+        // 【模組二 3 倍反向透視膨脹】利用 Scale 來實現深邃與飛近的 3D 視覺
         const depthFactor = Math.sin(speed * 0.5); 
         const scaleVal = 1.45 + depthFactor * 0.75; 
         stretchOrb.scale.setScalar(scaleVal + Math.cos(speed * 3) * 0.1);
@@ -717,16 +740,17 @@ export default function EyeComfortApp() {
     
     renderer.setAnimationLoop(animate);
     
+    // 【動態解析度對調】配合外層絕對定位防擠壓
     const handleResize = () => { 
       setTimeout(() => {
         const w = window.innerWidth;
         const h = window.innerHeight;
         const isNative = w > h;
-        const angle = gameState.current.deviceUiAngle;
-        
-        const activeAngle = isNative ? 0 : angle;
-        const renderW = activeAngle !== 0 ? h : w;
-        const renderH = activeAngle !== 0 ? w : h;
+        const sim = gameState.current.isSimulatedLandscape;
+        const angle = isNative ? 0 : (sim ? gyroAngleRef.current : 0);
+
+        const renderW = angle !== 0 ? Math.max(w, h) : Math.min(w, h);
+        const renderH = angle !== 0 ? Math.min(w, h) : Math.max(w, h);
 
         if (camera) {
           camera.aspect = renderW / renderH; 
@@ -877,24 +901,6 @@ export default function EyeComfortApp() {
     return () => clearInterval(timerId);
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
-  // 【核心新增】包含陀螺儀權限請求的訓練啟動器
-  const startTrainingWithOrientation = async (type: string) => {
-    try {
-      if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
-        const permissionState = await (DeviceOrientationEvent as any).requestPermission();
-        if (permissionState === 'granted') {
-          window.addEventListener('deviceorientation', handleDeviceOrientation);
-        }
-      } else {
-        window.addEventListener('deviceorientation', handleDeviceOrientation);
-      }
-    } catch (error) {
-      console.warn('陀螺儀未授權，將使用原生翻轉');
-      window.addEventListener('deviceorientation', handleDeviceOrientation);
-    }
-    startTraining(type);
-  };
-
   const startTraining = (type: string) => {
     if (audioRef.current.ctx?.state === 'suspended') { audioRef.current.ctx.resume(); }
 
@@ -916,7 +922,6 @@ export default function EyeComfortApp() {
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
       gameState.current.aiStatus = 'INIT'; 
       setTrackingState('INITIALIZING');
-      setManualCamAngle(0); 
       initEyeTracking(); 
     }
     
@@ -937,9 +942,9 @@ export default function EyeComfortApp() {
     }
     gameState.current.module = 'DASHBOARD'; 
     
-    window.removeEventListener('deviceorientation', handleDeviceOrientation);
-    setDeviceUiAngle(0);
-    gameState.current.deviceUiAngle = 0;
+    // 清除按鈕轉向狀態
+    setIsSimulatedLandscape(false);
+    gameState.current.isSimulatedLandscape = false;
     setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
 
     engineRef.current?.stop();
@@ -957,19 +962,20 @@ export default function EyeComfortApp() {
     if (isIntro) {
       showModuleIntro(type);
     } else {
-      startTrainingWithOrientation(type);
+      startTraining(type);
     }
   };
 
+  // 【動態佈局運算】
   const isNativeLandscape = dim.w > dim.h;
-  const activeAngle = isNativeLandscape ? 0 : deviceUiAngle;
+  const appliedAngle = isNativeLandscape ? 0 : (isSimulatedLandscape ? activeGyroAngle : 0);
   
-  const containerW = activeAngle !== 0 ? dim.h : dim.w;
-  const containerH = activeAngle !== 0 ? dim.w : dim.h;
-  const isEffectiveLandscape = isNativeLandscape || activeAngle !== 0;
+  const containerW = appliedAngle !== 0 ? Math.max(dim.w, dim.h) : dim.w;
+  const containerH = appliedAngle !== 0 ? Math.min(dim.w, dim.h) : dim.h;
+  const isEffectiveLandscape = isNativeLandscape || appliedAngle !== 0;
 
-  const autoCamCompensation = activeAngle === 90 ? -90 : activeAngle === -90 ? 90 : 0;
-  const finalCamRotation = (manualCamAngle + autoCamCompensation) % 360;
+  // 相機寫死自動補償，永遠正向
+  const autoCamCompensation = appliedAngle === 90 ? -90 : (appliedAngle === -90 ? 90 : 0);
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none">
@@ -982,7 +988,7 @@ export default function EyeComfortApp() {
           height: `${containerH}px`,
           marginLeft: `-${containerW / 2}px`,
           marginTop: `-${containerH / 2}px`,
-          transform: `rotate(${activeAngle}deg)`,
+          transform: `rotate(${appliedAngle}deg)`,
           transformOrigin: 'center center',
           transition: 'transform 0.4s ease, width 0.4s ease, height 0.4s ease'
         }}
@@ -1209,21 +1215,27 @@ export default function EyeComfortApp() {
             <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
 
             {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
-              <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
+              <button
+                onClick={toggleOrientation}
+                className="absolute top-5 right-5 z-20 flex items-center justify-center gap-2 bg-[#1a2233]/70 border border-[#2a3a5a] px-4 py-2 rounded-full backdrop-blur-md pointer-events-auto shadow-lg text-[#8b9bb4] hover:text-[#00ffcc] transition-colors"
+              >
+                <span className="text-[18px]">🔄</span>
+                <span className="text-[14px] font-bold tracking-wide">
+                  {isSimulatedLandscape ? '恢復直立' : '切換橫向'}
+                </span>
+              </button>
+            )}
+
+            {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
+              <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto">
                 <video 
                   ref={videoRef} 
                   className="w-full h-full object-cover transition-transform duration-300" 
-                  style={{ transform: `scaleX(-1) rotate(${finalCamRotation}deg)` }} 
+                  style={{ transform: `scaleX(-1) rotate(${autoCamCompensation}deg)` }} 
                   playsInline 
                   muted 
                   autoPlay 
                 />
-                <button 
-                  onClick={() => setManualCamAngle(prev => (prev + 90) % 360)}
-                  className="absolute top-1 right-1 bg-black/60 p-1.5 rounded-full text-white text-[12px] opacity-60 hover:opacity-100 transition-opacity"
-                >
-                  🔄
-                </button>
               </div>
             )}
 

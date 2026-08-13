@@ -174,8 +174,8 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            // 【核心修正】將閾值指定為 2.1 測試，適用於所有模式
-            const threshold = 2.1;
+            // 【核心修正】將閾值指定為 1.9 測試，適用於所有模式
+            const threshold = 1.9;
             
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;

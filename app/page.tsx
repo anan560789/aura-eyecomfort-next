@@ -52,12 +52,10 @@ export default function EyeComfortApp() {
   const [redeemCode, setRedeemCode] = useState<string>('');
 
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
+  const [manualCamAngle, setManualCamAngle] = useState<number>(0);
 
-  // 【核心狀態】儲存實體長寬與混合式轉向邏輯
   const [dim, setDim] = useState({ w: 0, h: 0 });
-  const [isSimulatedLandscape, setIsSimulatedLandscape] = useState<boolean>(false);
-  const [activeGyroAngle, setActiveGyroAngle] = useState<number>(90);
-  const gyroAngleRef = useRef<number>(90);
+  const [deviceUiAngle, setDeviceUiAngle] = useState<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
@@ -80,7 +78,6 @@ export default function EyeComfortApp() {
   useEffect(() => {
     const updateDim = () => {
       setDim({ w: window.innerWidth, h: window.innerHeight });
-      // 防衝突機制：使用者解鎖實體翻轉時，關閉虛擬翻轉
       if (window.innerWidth > window.innerHeight && gameState.current.isSimulatedLandscape) {
         setIsSimulatedLandscape(false);
         gameState.current.isSimulatedLandscape = false;
@@ -109,34 +106,23 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【核心機制：持續更新陀螺儀數值，但不自動翻轉】
   const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
     const gamma = event.gamma; 
     const beta = event.beta;   
     if (gamma === null || gamma === undefined || beta === null) return;
     
-    // 平放時不亂抓數值
     if (Math.abs(beta) < 20 || Math.abs(beta) > 160) return;
 
-    let newAngle = gyroAngleRef.current;
-    
-    if (gamma > 45) newAngle = -90; 
-    else if (gamma < -45) newAngle = 90; 
+    let newAngle = gameState.current.isSimulatedLandscape ? (gamma > 45 ? -90 : (gamma < -45 ? 90 : 90)) : 0;
 
-    if (newAngle !== gyroAngleRef.current) {
-      gyroAngleRef.current = newAngle;
-      setActiveGyroAngle(newAngle);
-      // 若處於虛擬橫向模式，根據最新方向自動微調
-      if (gameState.current.isSimulatedLandscape) {
-        setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
-      }
+    if (newAngle !== deviceUiAngle && gameState.current.isSimulatedLandscape) {
+      setDeviceUiAngle(newAngle);
+      setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
     }
-  }, []);
+  }, [deviceUiAngle]);
 
-  // 【手動按鈕切換邏輯】
   const toggleOrientation = async () => {
     if (!isSimulatedLandscape) {
-      // 點擊按鈕時才動態請求陀螺儀
       if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
         try {
           const permissionState = await (DeviceOrientationEvent as any).requestPermission();
@@ -154,6 +140,11 @@ export default function EyeComfortApp() {
     const newVal = !isSimulatedLandscape;
     setIsSimulatedLandscape(newVal);
     gameState.current.isSimulatedLandscape = newVal;
+    if (newVal) {
+        setDeviceUiAngle(90); // 預設轉向 90 度
+    } else {
+        setDeviceUiAngle(0);
+    }
     setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
   };
 
@@ -636,7 +627,7 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
-      const isEffectiveLandscape = gameState.current.isSimulatedLandscape || window.innerWidth > window.innerHeight;
+      const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
 
       const targetCamX = isEffectiveLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
@@ -746,11 +737,11 @@ export default function EyeComfortApp() {
         const w = window.innerWidth;
         const h = window.innerHeight;
         const isNative = w > h;
-        const sim = gameState.current.isSimulatedLandscape;
-        const angle = isNative ? 0 : (sim ? gyroAngleRef.current : 0);
-
-        const renderW = angle !== 0 ? Math.max(w, h) : Math.min(w, h);
-        const renderH = angle !== 0 ? Math.min(w, h) : Math.max(w, h);
+        const angle = gameState.current.deviceUiAngle;
+        
+        const activeAngle = isNative ? 0 : angle;
+        const renderW = activeAngle !== 0 ? Math.max(w, h) : Math.min(w, h);
+        const renderH = activeAngle !== 0 ? Math.min(w, h) : Math.max(w, h);
 
         if (camera) {
           camera.aspect = renderW / renderH; 
@@ -922,6 +913,7 @@ export default function EyeComfortApp() {
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
       gameState.current.aiStatus = 'INIT'; 
       setTrackingState('INITIALIZING');
+      setManualCamAngle(0); 
       initEyeTracking(); 
     }
     
@@ -942,7 +934,6 @@ export default function EyeComfortApp() {
     }
     gameState.current.module = 'DASHBOARD'; 
     
-    // 清除按鈕轉向狀態
     setIsSimulatedLandscape(false);
     gameState.current.isSimulatedLandscape = false;
     setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
@@ -976,6 +967,7 @@ export default function EyeComfortApp() {
 
   // 相機寫死自動補償，永遠正向
   const autoCamCompensation = appliedAngle === 90 ? -90 : (appliedAngle === -90 ? 90 : 0);
+  const finalCamRotation = (manualCamAngle + autoCamCompensation) % 360;
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none">
@@ -1204,7 +1196,7 @@ export default function EyeComfortApp() {
                 <p className="text-[#8b9bb4] text-[18px] leading-[1.8] m-0" dangerouslySetInnerHTML={{ __html: medicalPrinciples[activeModule].principle }}></p>
               </div>
               <div className="text-center">
-                <button onClick={() => startTrainingWithOrientation(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
+                <button onClick={() => startTraining(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
               </div>
             </div>
           </div>
@@ -1231,11 +1223,17 @@ export default function EyeComfortApp() {
                 <video 
                   ref={videoRef} 
                   className="w-full h-full object-cover transition-transform duration-300" 
-                  style={{ transform: `scaleX(-1) rotate(${autoCamCompensation}deg)` }} 
+                  style={{ transform: `scaleX(-1) rotate(${finalCamRotation}deg)` }} 
                   playsInline 
                   muted 
                   autoPlay 
                 />
+                <button 
+                  onClick={() => setManualCamAngle(prev => (prev + 90) % 360)}
+                  className="absolute top-1 right-1 bg-black/60 p-1.5 rounded-full text-white text-[12px] opacity-60 hover:opacity-100 transition-opacity"
+                >
+                  🔄
+                </button>
               </div>
             )}
 

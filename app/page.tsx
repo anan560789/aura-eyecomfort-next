@@ -54,8 +54,8 @@ export default function EyeComfortApp() {
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
   const [isLandscape, setIsLandscape] = useState<boolean>(false);
   
-  // 【新增】強制 UI 旋轉狀態 (解決 iOS LINE 鎖定直式問題)
-  const [uiRotation, setUiRotation] = useState<0 | 90 | -90>(0);
+  // 【新增】相機畫面獨立旋轉狀態 (解決 iOS 側翻 Bug)
+  const [camRotation, setCamRotation] = useState<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
@@ -71,15 +71,15 @@ export default function EyeComfortApp() {
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
-    prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 }
+    prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
+    isLandscape: false // 同步給底層 3D 引擎使用
   });
 
   useEffect(() => {
     const handleOrientationChange = () => {
       const landscape = window.innerWidth > window.innerHeight;
       setIsLandscape(landscape);
-      // 如果系統支援自動轉向，就清除手動 UI 旋轉
-      if (landscape) setUiRotation(0);
+      gameState.current.isLandscape = landscape;
     };
     window.addEventListener('resize', handleOrientationChange);
     handleOrientationChange();
@@ -438,7 +438,7 @@ export default function EyeComfortApp() {
   }, [loadCalendarData]);
 
   // ==========================================
-  // Three.js 引擎與動畫 (保持純淨滿版，完全不受 UI 旋轉影響)
+  // Three.js 引擎與動畫
   // ==========================================
   useEffect(() => {
     if (!canvasRef.current) return;
@@ -579,6 +579,11 @@ export default function EyeComfortApp() {
       gameState.current.activeTimeAcc += delta;
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
+
+      // 【核心解法一】3D 鏡頭智慧平移：當手機橫放時，鏡頭往右移 3.5 單位，使 3D 星球完美偏向左側，不再與文字重疊！
+      const targetCamX = gameState.current.isLandscape ? 3.5 : 0;
+      camera.position.x += (targetCamX - camera.position.x) * 0.08;
+      camera.lookAt(camera.position.x, 0, -100);
       
       if (mod === 'sop' && gameState.current.phase !== 'COMPLETED') {
         focusTarget.rotation.x += 0.002; 
@@ -846,7 +851,6 @@ export default function EyeComfortApp() {
       stopEyeTracking(); 
     }
     gameState.current.module = 'DASHBOARD'; 
-    setUiRotation(0); // 返回大廳時重置旋轉
     engineRef.current?.stop();
     if (noSleepRef.current) noSleepRef.current.disable();
     setCurrentView('DASHBOARD'); setActiveModule(null);
@@ -866,16 +870,11 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 統合橫式判定：如果是原生橫式 (isLandscape) 或是使用者手動切換了 UI 旋轉，都視為橫置排版
-  const isEffectiveLandscape = isLandscape || uiRotation !== 0;
-
   // ==========================================
   // React JSX 渲染樹
   // ==========================================
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#0f141e] font-sans">
-      
-      {/* 1. 底層 3D 畫布：永遠保持滿版，不受 UI 旋轉干擾 */}
       <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
 
       {currentView === 'DASHBOARD' && (
@@ -1093,40 +1092,32 @@ export default function EyeComfortApp() {
         </div>
       )}
 
-      {/* 2. UI 互動與提示層 (支援強制 CSS 旋轉) */}
       {currentView === 'TRAINING' && (
-        <div 
-          className="absolute z-10 pointer-events-none overflow-hidden"
-          style={{
-            width: uiRotation === 0 ? '100vw' : '100vh',
-            height: uiRotation === 0 ? '100vh' : '100vw',
-            top: '50%',
-            left: '50%',
-            transform: `translate(-50%, -50%) rotate(${uiRotation}deg)`,
-            transition: 'transform 0.4s ease, width 0.4s ease, height 0.4s ease'
-          }}
-        >
-          {/* 左上角：返回按鈕 */}
-          <button 
-            onClick={returnToDashboard} 
-            className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg"
-          >
-            🔙 返回大廳
-          </button>
+        <>
+          <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
+          
+          <div className="absolute top-5 right-5 z-20 flex items-center justify-center gap-2 bg-[#1a2233]/70 border border-[#2a3a5a] px-4 py-2 rounded-full backdrop-blur-md pointer-events-none drop-shadow-lg opacity-80">
+            <span className="text-[18px]">📱</span>
+            <span className="text-[#8b9bb4] text-[14px] font-bold tracking-wide">支援橫豎轉向</span>
+          </div>
 
-          {/* 右上角：手動畫面轉向按鈕 (專治 iOS LINE 鎖直立) */}
-          <button
-             onClick={() => setUiRotation(p => p === 0 ? 90 : p === 90 ? -90 : 0)}
-             className="absolute top-5 right-5 z-20 flex items-center justify-center gap-2 bg-[#1a2233]/70 border border-[#2a3a5a] px-4 py-2 rounded-full backdrop-blur-md pointer-events-auto shadow-lg text-[#8b9bb4] hover:text-[#00ffcc] transition-colors"
-          >
-            <span className="text-[18px]">🔄</span>
-            <span className="text-[14px] font-bold tracking-wide">切換轉向</span>
-          </button>
-
-          {/* 右下角：AI 防呆相機 */}
           {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
-            <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto">
-              <video ref={videoRef} className="w-full h-full object-cover transform scale-x-[-1]" playsInline muted autoPlay />
+            <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
+              {/* 【解法二】一鍵校正相機側躺問題的動態 Style */}
+              <video 
+                ref={videoRef} 
+                className="w-full h-full object-cover transition-transform duration-300" 
+                style={{ transform: `scaleX(-1) rotate(${camRotation}deg)` }} 
+                playsInline 
+                muted 
+                autoPlay 
+              />
+              <button 
+                onClick={() => setCamRotation(prev => (prev + 90) % 360)}
+                className="absolute top-1 right-1 bg-black/60 p-1.5 rounded-full text-white text-[12px] opacity-60 hover:opacity-100 transition-opacity"
+              >
+                🔄
+              </button>
             </div>
           )}
 
@@ -1160,15 +1151,14 @@ export default function EyeComfortApp() {
             </div>
           )}
 
-          {/* 中央動態提示文字層 */}
           <div 
             className="absolute px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10" 
             style={{
               transition: 'all 1.2s cubic-bezier(0.25,1,0.5,1)',
-              ...(isEffectiveLandscape
+              ...(isLandscape
                 ? uiState.position === 'CENTER'
                   ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '80%' }
-                  : { top: '50%', right: '5%', transform: 'translateY(-50%)', width: '45%' }
+                  : { top: '50%', left: '75%', transform: 'translate(-50%, -50%)', width: '45%' }
                 : uiState.position === 'CENTER'
                   ? { top: '45%', left: '50%', transform: 'translate(-50%, -50%)', width: '100%' }
                   : { top: '75%', left: '50%', transform: 'translate(-50%, -50%)', width: '100%' }
@@ -1189,7 +1179,7 @@ export default function EyeComfortApp() {
               <button onClick={() => { gameState.current.isWaitingForRightEye = false; playDingSound(); setUiState(prev => ({...prev, showContinue: false})); }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
             )}
           </div>
-        </div>
+        </>
       )}
 
       {currentView === 'TEST_REPORT' && (

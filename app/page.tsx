@@ -56,7 +56,7 @@ export default function EyeComfortApp() {
   // 【核心狀態：尺寸與陀螺儀轉向】
   const [dim, setDim] = useState({ w: 0, h: 0 });
   const [isSimulatedLandscape, setIsSimulatedLandscape] = useState<boolean>(false);
-  const [activeGyroAngle, setActiveGyroAngle] = useState<number>(90); // 記錄目前的實體翻轉角度
+  const [activeGyroAngle, setActiveGyroAngle] = useState<number>(90); 
   const gyroAngleRef = useRef<number>(90);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -80,7 +80,6 @@ export default function EyeComfortApp() {
   useEffect(() => {
     const updateDim = () => {
       setDim({ w: window.innerWidth, h: window.innerHeight });
-      // 防衝突機制：原生解鎖時關閉虛擬翻轉
       if (window.innerWidth > window.innerHeight && gameState.current.isSimulatedLandscape) {
         setIsSimulatedLandscape(false);
         gameState.current.isSimulatedLandscape = false;
@@ -109,32 +108,52 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【核心機制：永遠在背景更新陀螺儀數值，依據實際傾斜決定 90 或 -90】
+  // 【終極修復：解鎖全域 3D 陀螺儀】就算平放桌面或躺在床上也能精準判斷左右轉！
   const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
     const gamma = event.gamma; 
     const beta = event.beta;   
     if (gamma === null || gamma === undefined || beta === null) return;
     
-    if (Math.abs(beta) < 20 || Math.abs(beta) > 160) return;
+    // 如果手機 100% 絕對平放（低於 15 度），才忽略以防干擾
+    if (Math.abs(beta) < 15 || Math.abs(beta) > 165) return;
+
+    let g = gamma;
+    // iOS 陀螺儀防呆校正：當手機螢幕朝下或過度前傾時，gamma 訊號會反轉，必須補償
+    if (beta > 90 || beta < -90) {
+      g = -g;
+    }
 
     let newAngle = gyroAngleRef.current;
     
-    // gamma 決定往左或往右翻轉
-    if (gamma > 45) newAngle = -90; 
-    else if (gamma < -45) newAngle = 90; 
+    // 降低閾值，只要往左右傾斜超過 35 度，就自動判定翻轉方向
+    if (g > 35) newAngle = -90; // 順時針轉（手機頂部朝右）
+    else if (g < -35) newAngle = 90; // 逆時針轉（手機頂部朝左）
 
     if (newAngle !== gyroAngleRef.current) {
       gyroAngleRef.current = newAngle;
       setActiveGyroAngle(newAngle);
-      // 若目前已處於虛擬橫向，則即時翻轉畫面
       if (gameState.current.isSimulatedLandscape) {
         setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
       }
     }
   }, []);
 
-  // 【手動切換狀態按鈕】
-  const toggleOrientation = () => {
+  const toggleOrientation = async () => {
+    if (!isSimulatedLandscape) {
+      if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
+        try {
+          const permissionState = await (DeviceOrientationEvent as any).requestPermission();
+          if (permissionState === 'granted') {
+            window.addEventListener('deviceorientation', handleDeviceOrientation);
+          }
+        } catch (error) {
+          console.warn('陀螺儀權限請求失敗');
+        }
+      } else {
+        window.addEventListener('deviceorientation', handleDeviceOrientation);
+      }
+    }
+
     const newVal = !isSimulatedLandscape;
     setIsSimulatedLandscape(newVal);
     gameState.current.isSimulatedLandscape = newVal;
@@ -880,7 +899,6 @@ export default function EyeComfortApp() {
     return () => clearInterval(timerId);
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
-  // 【包含陀螺儀授權的啟動器】
   const startTrainingWithOrientation = async (type: string) => {
     try {
       if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
@@ -958,10 +976,11 @@ export default function EyeComfortApp() {
     if (isIntro) {
       showModuleIntro(type);
     } else {
-      startTrainingWithOrientation(type); // 這裡改回呼叫有陀螺儀授權的啟動器
+      startTrainingWithOrientation(type);
     }
   };
 
+  // 【動態佈局運算】
   const isNativeLandscape = dim.w > dim.h;
   const appliedAngle = isNativeLandscape ? 0 : (isSimulatedLandscape ? activeGyroAngle : 0);
   
@@ -969,9 +988,9 @@ export default function EyeComfortApp() {
   const containerH = appliedAngle !== 0 ? Math.min(dim.w, dim.h) : dim.h;
   const isEffectiveLandscape = isNativeLandscape || appliedAngle !== 0;
 
-  // 【核心相機絕對正向寫死】：依據 UI 的旋轉角度，底層完美反轉，永遠不會顛倒
-  const autoCamCompensation = -appliedAngle;
-  // 計算旋轉後在畫面上需要預留的長寬框線
+  // 【核心雙層無畸變相機修正】
+  // 外層隨 UI 旋轉，內層鏡頭絕對反向鎖死，保證永遠正向！
+  const autoCamCompensation = -appliedAngle; 
   const camWidth = appliedAngle !== 0 ? 130 : 100;
   const camHeight = appliedAngle !== 0 ? 100 : 130;
 
@@ -1202,7 +1221,7 @@ export default function EyeComfortApp() {
                 <p className="text-[#8b9bb4] text-[18px] leading-[1.8] m-0" dangerouslySetInnerHTML={{ __html: medicalPrinciples[activeModule].principle }}></p>
               </div>
               <div className="text-center">
-                <button onClick={() => startTraining(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
+                <button onClick={() => startTrainingWithOrientation(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
               </div>
             </div>
           </div>
@@ -1224,12 +1243,16 @@ export default function EyeComfortApp() {
               </button>
             )}
 
+            {/* 【雙層無畸變相機容器】：徹底解決 CSS Transform 旋轉造成的影像顛倒問題 */}
             {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
-              <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none flex items-center justify-center">
+              <div 
+                className="absolute bottom-5 right-5 bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none flex items-center justify-center"
+                style={{ width: `${camWidth}px`, height: `${camHeight}px` }}
+              >
                 <div 
                   style={{ 
-                    width: `${camWidth}px`, 
-                    height: `${camHeight}px`,
+                    width: `${camHeight}px`,  
+                    height: `${camWidth}px`,  
                     transform: `rotate(${autoCamCompensation}deg)`,
                     transformOrigin: 'center center'
                   }}

@@ -52,10 +52,10 @@ export default function EyeComfortApp() {
   const [redeemCode, setRedeemCode] = useState<string>('');
 
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
-  const [camRotation, setCamRotation] = useState<number>(0);
+  const [manualCamAngle, setManualCamAngle] = useState<number>(0);
 
-  // 【核心新增】儲存真實螢幕尺寸與陀螺儀轉向狀態
-  const [dim, setDim] = useState({ w: 390, h: 844 });
+  // 儲存真實螢幕尺寸與陀螺儀轉向狀態
+  const [dim, setDim] = useState({ w: 0, h: 0 });
   const [deviceUiAngle, setDeviceUiAngle] = useState<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -76,17 +76,20 @@ export default function EyeComfortApp() {
     deviceUiAngle: 0
   });
 
+  // 尺寸初始化與 Resize 監聽
   useEffect(() => {
     const updateDim = () => {
       setDim({ w: window.innerWidth, h: window.innerHeight });
-      // 如果觸發實體螢幕轉向，強制歸零虛擬轉向，防止雙重擠壓！
+      // 防衝突：如果原生已經橫向，取消虛擬轉向
       if (window.innerWidth > window.innerHeight) {
         setDeviceUiAngle(0);
         gameState.current.deviceUiAngle = 0;
       }
     };
-    updateDim();
-    window.addEventListener('resize', updateDim);
+    if (typeof window !== 'undefined') {
+      updateDim();
+      window.addEventListener('resize', updateDim);
+    }
     return () => window.removeEventListener('resize', updateDim);
   }, []);
 
@@ -106,9 +109,8 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【核心功能】主動偵測實體陀螺儀並連動 UI 旋轉，不需任何按鈕
+  // 【全自動陀螺儀偵測】
   const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
-    // 防衝突機制：如果手機「已經解鎖並實體轉為橫向」，絕對不啟用虛擬旋轉
     if (window.innerWidth > window.innerHeight) {
       if (gameState.current.deviceUiAngle !== 0) {
         gameState.current.deviceUiAngle = 0;
@@ -118,16 +120,15 @@ export default function EyeComfortApp() {
       return;
     }
 
-    const gamma = event.gamma; // 左右傾斜
-    const beta = event.beta;   // 前後傾斜
+    const gamma = event.gamma; 
+    const beta = event.beta;   
     if (gamma === null || gamma === undefined || beta === null) return;
-
-    // 防止平放在桌面上時的亂翻轉
+    
+    // 平放時不亂翻轉
     if (Math.abs(beta) < 20 || Math.abs(beta) > 160) return;
 
     let newAngle = gameState.current.deviceUiAngle;
     
-    // gamma 反映手機左右傾斜：大於 45 視為右倒，小於 -45 視為左倒
     if (gamma > 45) newAngle = -90; 
     else if (gamma < -45) newAngle = 90; 
     else if (Math.abs(gamma) < 25) newAngle = 0; 
@@ -135,7 +136,6 @@ export default function EyeComfortApp() {
     if (newAngle !== gameState.current.deviceUiAngle) {
       gameState.current.deviceUiAngle = newAngle;
       setDeviceUiAngle(newAngle);
-      // 通知 3D 引擎重新計算絕對滿版的長寬
       setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
     }
   }, []);
@@ -156,7 +156,7 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
           
-          // 絕對距離公式，免疫一切相機側翻或顛倒問題
+          // 絕對距離防側躺誤判
           const leftDist = Math.hypot(lm[1].x - lm[33].x, lm[1].y - lm[33].y);
           const rightDist = Math.hypot(lm[263].x - lm[1].x, lm[263].y - lm[1].y);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
@@ -180,7 +180,6 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            // 橫向模式時放寬判定閾值
             const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
             const threshold = isEffectiveLandscape ? 2.5 : 1.6;
             
@@ -620,7 +619,6 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
-      // 判斷是否為橫向模式 (實體橫向 或 陀螺儀橫向)
       const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
 
       // 3D 鏡頭智慧平移 (解決文字與星球重疊問題)
@@ -658,7 +656,6 @@ export default function EyeComfortApp() {
         gameState.current.stretchAngle += (0.025 * gameState.current.prescription.stretchSpeed); 
         const speed = gameState.current.stretchAngle; 
         
-        // 限制 Z 軸避免靠近鏡頭時產生橢圓透視變形，改由 scale 強化遠近感
         const currentZ = -40 + Math.sin(speed * 0.5) * 15; 
         const distToCamera = camera.position.z - currentZ;
         const vFovRad = (camera.fov * Math.PI) / 180;
@@ -668,18 +665,16 @@ export default function EyeComfortApp() {
         const edgeX = visibleWidth / 2; 
         const edgeY = visibleHeight / 2;
         
-        // 確保橫向時，軌跡完全包覆在畫面內，絕對不會跑出邊界
         let centerX = camera.position.x;
         let ampX = edgeX * 0.8; 
         
         if (isEffectiveLandscape) {
-            centerX = camera.position.x - edgeX * 0.15; // 稍微向左偏移讓出文字空間
-            ampX = edgeX * 0.65; // 強制將軌跡限縮在畫面寬度的 65% 內
+            centerX = camera.position.x - edgeX * 0.15; 
+            ampX = edgeX * 0.65; 
         }
         
         const ampY = Math.min(edgeY * 0.6, 12); 
         
-        // 球體飛近時，增加真實的放大比例，不再依賴容易畸變的透視法
         const extraScale = (60 - distToCamera) * 0.02;
         stretchOrb.scale.setScalar(1 + extraScale + Math.cos(speed * 3) * 0.1);
         
@@ -722,7 +717,6 @@ export default function EyeComfortApp() {
     
     renderer.setAnimationLoop(animate);
     
-    // 【核心修正】3D 引擎自動抓取完美解析度，消滅橢圓畸變與雙重擠壓！
     const handleResize = () => { 
       setTimeout(() => {
         const w = window.innerWidth;
@@ -730,9 +724,8 @@ export default function EyeComfortApp() {
         const isNative = w > h;
         const angle = gameState.current.deviceUiAngle;
         
-        // 防衝突機制：如果 OS 已經是原生橫向，長寬就不需要再因為陀螺儀對調！
+        // 【核心修正】3D 引擎自動抓取完美解析度，消滅橢圓畸變與雙重擠壓！
         const activeAngle = isNative ? 0 : angle;
-
         const renderW = activeAngle !== 0 ? h : w;
         const renderH = activeAngle !== 0 ? w : h;
 
@@ -885,7 +878,7 @@ export default function EyeComfortApp() {
     return () => clearInterval(timerId);
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
-  // 【核心功能】進入訓練時主動請求 iOS 陀螺儀權限，並自動掛載轉向監聽
+  // 【核心新增】進入訓練時主動請求 iOS 陀螺儀權限，並綁定自動翻轉
   const startTrainingWithOrientation = async (type: string) => {
     try {
       if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
@@ -897,7 +890,7 @@ export default function EyeComfortApp() {
         window.addEventListener('deviceorientation', handleDeviceOrientation);
       }
     } catch (error) {
-      console.warn('陀螺儀權限請求被略過或失敗');
+      console.warn('陀螺儀未授權，將使用原生翻轉');
       window.addEventListener('deviceorientation', handleDeviceOrientation);
     }
     startTraining(type);
@@ -924,7 +917,7 @@ export default function EyeComfortApp() {
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
       gameState.current.aiStatus = 'INIT'; 
       setTrackingState('INITIALIZING');
-      setCamRotation(0); 
+      setManualCamAngle(0); 
       initEyeTracking(); 
     }
     
@@ -965,33 +958,44 @@ export default function EyeComfortApp() {
     if (isIntro) {
       showModuleIntro(type);
     } else {
-      // 確保從使用者點擊啟動陀螺儀權限
-      startTrainingWithOrientation(type);
+      startTrainingWithOrientation(type); // 確保每次直接進入都要求陀螺儀權限
     }
   };
 
-  // 統合橫式的最終判定條件，如果原生已經轉向，就不使用虛擬轉向角度
+  // 【絕對佈局計算】取得當下正確的寬高與旋轉角，防衝突
   const isNativeLandscape = dim.w > dim.h;
   const activeAngle = isNativeLandscape ? 0 : deviceUiAngle;
   
+  // 旋轉後的邏輯容器長寬，供內部 Absolute 排版使用
   const containerW = activeAngle !== 0 ? dim.h : dim.w;
   const containerH = activeAngle !== 0 ? dim.w : dim.h;
+
+  // 統合橫式判定，提供給 3D 引擎運鏡與文字排版
   const isEffectiveLandscape = isNativeLandscape || activeAngle !== 0;
+
+  // 【核心相機反向校正】相機影像因為 CSS 容器轉了 90 度，所以影片必須反向轉 -90 度抵銷
+  // 但我們仍然提供手動按鈕讓使用者隨時轉向 (manualCamAngle)
+  const autoCamCompensation = activeAngle === 90 ? -90 : activeAngle === -90 ? 90 : 0;
+  const finalCamRotation = (manualCamAngle + autoCamCompensation) % 360;
 
   // ==========================================
   // React JSX 渲染樹
   // ==========================================
   return (
-    // 使用 fixed inset-0 鎖定最外圍版面，阻擋所有原生留白問題
-    <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none flex items-center justify-center">
+    // 【終極滿版鎖死】移除 Flexbox！外層純鎖死，內層用 absolute 負邊距完美置中旋轉！
+    <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none">
       <div 
-        className="relative bg-[#0f141e]"
+        className="absolute"
         style={{
+          top: '50%',
+          left: '50%',
           width: `${containerW}px`,
           height: `${containerH}px`,
+          marginLeft: `-${containerW / 2}px`,
+          marginTop: `-${containerH / 2}px`,
           transform: `rotate(${activeAngle}deg)`,
           transformOrigin: 'center center',
-          transition: 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), width 0.4s ease, height 0.4s ease'
+          transition: 'transform 0.4s ease, width 0.4s ease, height 0.4s ease'
         }}
       >
         <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
@@ -1214,21 +1218,19 @@ export default function EyeComfortApp() {
         {currentView === 'TRAINING' && (
           <>
             <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
-            
-            {/* 已經徹底移除「手動切換轉向按鈕」 */}
 
             {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
               <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
                 <video 
                   ref={videoRef} 
                   className="w-full h-full object-cover transition-transform duration-300" 
-                  style={{ transform: `scaleX(-1) rotate(${camRotation}deg)` }} 
+                  style={{ transform: `scaleX(-1) rotate(${finalCamRotation}deg)` }} 
                   playsInline 
                   muted 
                   autoPlay 
                 />
                 <button 
-                  onClick={() => setCamRotation(prev => (prev + 90) % 360)}
+                  onClick={() => setManualCamAngle(prev => (prev + 90) % 360)}
                   className="absolute top-1 right-1 bg-black/60 p-1.5 rounded-full text-white text-[12px] opacity-60 hover:opacity-100 transition-opacity"
                 >
                   🔄

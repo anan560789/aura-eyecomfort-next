@@ -52,8 +52,11 @@ export default function EyeComfortApp() {
   const [redeemCode, setRedeemCode] = useState<string>('');
 
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
-  const [isLandscape, setIsLandscape] = useState<boolean>(false);
   const [camRotation, setCamRotation] = useState<number>(0);
+
+  // 【核心新增】儲存真實螢幕尺寸與虛擬轉向狀態
+  const [dim, setDim] = useState({ w: 0, h: 0 });
+  const [isSimulatedLandscape, setIsSimulatedLandscape] = useState<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
@@ -70,20 +73,16 @@ export default function EyeComfortApp() {
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
-    isLandscape: false
+    isSimulatedLandscape: false,
+    isEffectiveLandscape: false
   });
 
   useEffect(() => {
     const handleOrientationChange = () => {
-      setTimeout(() => {
-        const landscape = window.innerWidth > window.innerHeight;
-        setIsLandscape(landscape);
-        gameState.current.isLandscape = landscape;
-        window.scrollTo(0, 0); 
-      }, 100);
+      setDim({ w: window.innerWidth, h: window.innerHeight });
     };
+    handleOrientationChange(); // 初始化
     window.addEventListener('resize', handleOrientationChange);
-    handleOrientationChange();
     return () => window.removeEventListener('resize', handleOrientationChange);
   }, []);
 
@@ -119,6 +118,7 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
           
+          // 【核心修正】升級為絕對距離公式，免疫一切相機側翻或顛倒問題
           const leftDist = Math.hypot(lm[1].x - lm[33].x, lm[1].y - lm[33].y);
           const rightDist = Math.hypot(lm[263].x - lm[1].x, lm[263].y - lm[1].y);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
@@ -142,7 +142,8 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            const threshold = gameState.current.isLandscape ? 2.5 : 1.6;
+            // 【核心修正】橫向模式時放寬判定閾值，避免頻繁誤判
+            const threshold = gameState.current.isEffectiveLandscape ? 2.5 : 1.6;
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
             }
@@ -579,7 +580,8 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
-      const targetCamX = gameState.current.isLandscape ? 3.5 : 0;
+      // 【核心修正】3D 鏡頭智慧平移 (解決文字與星球重疊問題)
+      const targetCamX = gameState.current.isEffectiveLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
       camera.lookAt(camera.position.x, 0, -100);
       
@@ -627,7 +629,7 @@ export default function EyeComfortApp() {
         let centerX = camera.position.x;
         let ampX = edgeX * 0.8; // 直立時保持原樣
         
-        if (gameState.current.isLandscape) {
+        if (gameState.current.isEffectiveLandscape) {
             centerX = camera.position.x - edgeX * 0.15; // 稍微向左偏移讓出文字空間
             ampX = edgeX * 0.65; // 強制將軌跡限縮在畫面寬度的 65% 內
         }
@@ -677,20 +679,24 @@ export default function EyeComfortApp() {
     
     renderer.setAnimationLoop(animate);
     
-    // 【修正】多重監聽 Resize，強制推翻 iOS Safari 旋轉時的安全邊界留白
+    // 【核心修正】3D 引擎重新計算解析度，解決橢圓形畸變與白邊問題
     const handleResize = () => { 
-      const updateSize = () => {
-        if (!camera || !renderer) return;
+      setTimeout(() => {
         const w = window.innerWidth;
         const h = window.innerHeight;
-        camera.aspect = w / h; 
+        const isNative = w > h;
+        const sim = gameState.current.isSimulatedLandscape && !isNative;
+
+        // 如果是模擬橫向，長寬必須完美對調以配合 CSS 旋轉，這樣球體才不會變橢圓！
+        const renderW = sim ? h : w;
+        const renderH = sim ? w : h;
+
+        camera.aspect = renderW / renderH; 
         camera.updateProjectionMatrix(); 
-        renderer.setSize(w, h); 
-      };
-      updateSize();
-      setTimeout(updateSize, 100);
-      setTimeout(updateSize, 300);
-      setTimeout(updateSize, 500);
+        renderer.setSize(renderW, renderH); 
+        
+        gameState.current.isEffectiveLandscape = renderW > renderH;
+      }, 100);
     };
     window.addEventListener('resize', handleResize);
     
@@ -873,6 +879,12 @@ export default function EyeComfortApp() {
       stopEyeTracking(); 
     }
     gameState.current.module = 'DASHBOARD'; 
+    
+    // 【核心修正】返回大廳時完全解除虛擬旋轉
+    setIsSimulatedLandscape(false);
+    gameState.current.isSimulatedLandscape = false;
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+
     engineRef.current?.stop();
     if (noSleepRef.current) noSleepRef.current.disable();
     setCurrentView('DASHBOARD'); setActiveModule(null);
@@ -892,353 +904,382 @@ export default function EyeComfortApp() {
     }
   };
 
+  // 【核心新增】統整橫式的最終判定條件，提供給 RWD 介面層排版使用
+  const isNativeLandscape = dim.w > dim.h;
+  const applySimulatedLandscape = isSimulatedLandscape && !isNativeLandscape;
+  const effectiveW = applySimulatedLandscape ? dim.h : dim.w;
+  const effectiveH = applySimulatedLandscape ? dim.w : dim.h;
+  const isEffectiveLandscape = effectiveW > effectiveH;
+
   // ==========================================
   // React JSX 渲染樹
   // ==========================================
   return (
-    // 【修正】使用絕對鎖死與 maxWidth/MaxHeight 排除 iOS 白邊留白問題
-    <div 
-      className="fixed top-0 left-0 w-full h-full overflow-hidden bg-[#0f141e] font-sans touch-none"
-      style={{ width: '100vw', height: '100vh', maxWidth: '100%', maxHeight: '100%' }}
-    >
-      <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
+    // 【核心修正】利用外層 fixed inset-0 徹底鎖死安全區域白邊，內層 relative 來承接物理尺寸與旋轉
+    <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none flex items-center justify-center">
+      <div 
+        className="relative bg-[#0f141e]"
+        style={{
+          width: `${effectiveW}px`,
+          height: `${effectiveH}px`,
+          transform: applySimulatedLandscape ? 'rotate(90deg)' : 'none',
+          transformOrigin: 'center center',
+          transition: 'transform 0.3s ease, width 0.3s ease, height 0.3s ease'
+        }}
+      >
+        <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
 
-      {currentView === 'DASHBOARD' && (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-start py-10 px-5 overflow-y-auto box-border">
-          <h1 className="text-[#fffdd0] text-[32px] text-center mb-[15px] tracking-[1px]"><div className="text-[55px] mb-[10px]">👁️</div>Aura EyeGym</h1>
-          <p className="text-[#00ffcc] text-[16px] mt-[-10px] mb-[15px]">數位視覺復健中心</p>
-          <p className={`text-[20px] text-center leading-[1.5] mb-[20px] break-keep ${lineProfile.uid !== '未登入' ? 'text-[#00ffcc]' : 'text-[#8b9bb4]'}`}>
-            {lineProfile.uid !== '未登入' ? `歡迎回來，${lineProfile.name}！請選擇您的專屬放鬆模組` : (
-              <>請選擇您的專屬眼部放鬆與訓練模組<br /><button onClick={() => liff.login({ redirectUri: window.location.href })} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)]">🟢 使用 LINE 一鍵登入</button></>
-            )}
-          </p>
+        {currentView === 'DASHBOARD' && (
+          <div className="absolute inset-0 z-10 flex flex-col items-center justify-start py-10 px-5 overflow-y-auto box-border">
+            <h1 className="text-[#fffdd0] text-[32px] text-center mb-[15px] tracking-[1px]"><div className="text-[55px] mb-[10px]">👁️</div>Aura EyeGym</h1>
+            <p className="text-[#00ffcc] text-[16px] mt-[-10px] mb-[15px]">數位視覺復健中心</p>
+            <p className={`text-[20px] text-center leading-[1.5] mb-[20px] break-keep ${lineProfile.uid !== '未登入' ? 'text-[#00ffcc]' : 'text-[#8b9bb4]'}`}>
+              {lineProfile.uid !== '未登入' ? `歡迎回來，${lineProfile.name}！請選擇您的專屬放鬆模組` : (
+                <>請選擇您的專屬眼部放鬆與訓練模組<br /><button onClick={() => liff.login({ redirectUri: window.location.href })} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)]">🟢 使用 LINE 一鍵登入</button></>
+              )}
+            </p>
 
-          <div className="bg-[#162b2b] border border-[#00ffcc] rounded-lg p-3 mb-[30px] w-full max-w-[800px] text-center shadow-[0_0_10px_rgba(0,255,204,0.2)]">
-            <p className="text-[#00ffcc] text-[14px] m-0 mb-1">🤖 邊緣運算自適應引擎啟動中</p>
-            <p className="text-[#fffdd0] text-[16px] m-0 font-bold">為您生成的動態數位處方：強度 Level {aiPrescriptionLevel}</p>
-          </div>
-
-          <div className="w-full max-w-[800px] flex flex-col gap-5 mb-[40px]">
-            <div onClick={() => setCurrentView('INFO_MODULES')} className="w-full bg-[#1a2233] border-2 border-[#E5B55E] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(229,181,94,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
-              <h3 className="text-[#E5B55E] text-[22px] mb-2 font-bold">📖 數位復健模組與醫學學理說明</h3>
-              <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解本中心五大訓練模組之設計原理與學術文獻探討</p>
-            </div>
-            
-            <div onClick={() => setCurrentView('CALENDAR')} className="w-full bg-[#161b22] border-2 border-[#4D96FF] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(77,150,255,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
-              <h3 className="text-[#4D96FF] text-[22px] mb-2 font-bold">📅 每日/每月復健進度</h3>
-              <p className="text-[#8b9bb4] text-[16px] m-0">點擊查看您的打卡紀錄，分享給家人與醫師</p>
+            <div className="bg-[#162b2b] border border-[#00ffcc] rounded-lg p-3 mb-[30px] w-full max-w-[800px] text-center shadow-[0_0_10px_rgba(0,255,204,0.2)]">
+              <p className="text-[#00ffcc] text-[14px] m-0 mb-1">🤖 邊緣運算自適應引擎啟動中</p>
+              <p className="text-[#fffdd0] text-[16px] m-0 font-bold">為您生成的動態數位處方：強度 Level {aiPrescriptionLevel}</p>
             </div>
 
-            {!isPremiumUnlocked && (
-              <div className="w-full bg-[#2a1f1a] border-2 border-[#ff4d4d] rounded-xl p-5 mb-5 shadow-[0_0_15px_rgba(255,77,77,0.2)] flex flex-col items-center">
-                <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-2">🔒 啟動完整醫療級復健療程</h3>
-                <p className="text-[#d1b0b0] text-[15px] text-center mb-4">請輸入診所開立之 30 天數位護眼計畫授權碼，解鎖全套模組。</p>
-                <button onClick={() => setShowRedeemModal(true)} className="px-6 py-3 bg-[#ff4d4d] text-white font-bold rounded-full w-full max-w-[300px]">🎟️ 輸入處方授權碼</button>
+            <div className="w-full max-w-[800px] flex flex-col gap-5 mb-[40px]">
+              <div onClick={() => setCurrentView('INFO_MODULES')} className="w-full bg-[#1a2233] border-2 border-[#E5B55E] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(229,181,94,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
+                <h3 className="text-[#E5B55E] text-[22px] mb-2 font-bold">📖 數位復健模組與醫學學理說明</h3>
+                <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解本中心五大訓練模組之設計原理與學術文獻探討</p>
               </div>
-            )}
-            
-            <div className="flex flex-col gap-5 w-full">
-              <ModuleCard title="🚀 45秒快速舒緩" desc="結合遠眺聚焦、隨機白球衝擊與深層閉眼潤滑。" color="#FF6B6B" onClick={() => handleModuleAccess('sop', true)} isLocked={!isPremiumUnlocked} />
-              <ModuleCard title="🔄 動態 3D 眼肌伸展" desc="引導眼球進行 ∞ 字型極限軌跡，強迫拉伸控制眼球的六條眼外肌。" color="#4D96FF" onClick={() => handleModuleAccess('stretch', true)} isLocked={!isPremiumUnlocked} />
-              <ModuleCard title="🎮 睫狀肌深空追光" desc="【放鬆遊戲】死盯流星飛向深空，強迫睫狀肌徹底看遠放鬆。" color="#6BCB77" onClick={() => handleModuleAccess('chaser', true)} isLocked={!isPremiumUnlocked} />
-              <ModuleCard title="🌌 星雲散焦與神經放鬆" desc="【深度冥想】釋放隧道視覺，同步 3D 粒子星雲進行共振呼吸。" color="#FFD93D" onClick={() => handleModuleAccess('breathe', true)} isLocked={!isPremiumUnlocked} />
-              <ModuleCard title="🎯 Z 軸遠近對焦飛梭" desc="高強度睫狀肌重訓！利用極端遠近切換，恢復眼球對焦彈性。" color="#FF3366" onClick={() => handleModuleAccess('focus', true)} isLocked={!isPremiumUnlocked} />
-              <ModuleCard title="🔍 互動式黃斑部評估" desc="專利級數位化阿姆斯勒方格表，包含左右眼自適應風險運算。" color="#9D4EDD" onClick={() => handleModuleAccess('amsler', false)} isLocked={!isPremiumUnlocked} />
-              <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛在散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => handleModuleAccess('astigmatism', false)} isLocked={!isPremiumUnlocked} />
-            </div>
-
-            <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02] mt-2">
-              <h3 className="text-[#00ffcc] text-[22px] mb-2 font-bold">🔬 旗艦護眼營養百科</h3>
-              <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解針對不同眼睛部位結構的專屬營養配方解析</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {currentView === 'INFO_NUTRIENT' && (
-        <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
-          <div className="max-w-[800px] mx-auto pb-[50px]">
-            <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold shadow-lg">🔙 返回大廳</button>
-            <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#00ffcc] pb-2.5 mb-[15px] font-bold">🔬 旗艦護眼營養部位百科</h2>
-            <div className="mb-6 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d] shadow-[0_0_10px_rgba(255,77,77,0.2)]">
-              <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-3 flex items-center gap-2"><span>⚠️</span> 醫療法規與免責聲明</h3>
-              <p className="text-[#d1b0b0] text-[16px] leading-[1.8] m-0">本頁面提供之營養素資訊僅供日常生理保健與學理參考，<strong>不代表任何產品具備診斷、治療或預防眼科疾病之療效</strong>。營養素通常是維持組織正常功能或降低缺乏風險，不能取代眼科檢查與治療。</p>
-            </div>
-            <p className="text-[#8b9bb4] text-[17px] leading-[1.6] mb-5 bg-[#162b2b] p-4 rounded-lg"><strong className="text-[#00ffcc]">閱讀重點｜</strong>眼睛是非常精密的器官，不同的解剖構造需要對應不同的關鍵營養素。單一成分無法顧及全眼健康，以下為具備醫學學理支持的營養素對應表：</p>
-            <button onClick={() => setCurrentView('INFO_RPE')} className="w-full py-4 mb-6 bg-[#2B579A] text-white border-none rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(43,87,154,0.4)] transition-transform hover:scale-[1.02]">
-              👉 深度解析：為什麼視網膜色素上皮 (RPE) 很重要？
-            </button>
-            <div className="overflow-x-auto mb-[30px] rounded-lg shadow-lg">
-              <table className="w-full min-w-[600px] border-collapse text-[#fffdd0] text-[15px] leading-[1.6]">
-                <thead><tr className="bg-[#1a2233] text-left"><th className="p-3 border border-[#2a3a5a] w-[25%]">關鍵營養素</th><th className="p-3 border border-[#2a3a5a] w-[25%]">主要作用部位</th><th className="p-3 border border-[#2a3a5a] w-[50%]">學理與功能性參考</th></tr></thead>
-                <tbody>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">葉黃素、玉米黃素</td><td className="p-3 border border-[#2a3a5a]">視網膜黃斑部、中央凹</td><td className="p-3 border border-[#2a3a5a]">構成黃斑色素，與中央視力、辨色及對比敏感度有關；是最直接對應黃斑部的營養素。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Propolins<br/>(尤其 Propolin G)</td><td className="p-3 border border-[#2a3a5a]">視網膜色素上皮 (RPE)；黃斑部外層</td><td className="p-3 border border-[#2a3a5a]">細胞實驗顯示可提高氧化或缺氧損傷下的存活；動物模型中顯示 RPE 功能改善。目前屬細胞與動物前臨床證據。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素A、β-胡蘿蔔素</td><td className="p-3 border border-[#2a3a5a]">視網膜桿狀細胞；角膜、結膜</td><td className="p-3 border border-[#2a3a5a]">參與視紫質形成並維持眼表上皮；缺乏時可能導致乾眼與角膜損傷。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">DHA</td><td className="p-3 border border-[#2a3a5a]">視網膜感光細胞</td><td className="p-3 border border-[#2a3a5a]">感光細胞膜的重要結構成分，在視網膜含量很高。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Omega-3<br/>(EPA、DHA)</td><td className="p-3 border border-[#2a3a5a]">淚膜、瞼板腺、眼表</td><td className="p-3 border border-[#2a3a5a]">可能影響發炎與淚膜油脂層；但大型研究中對中重度乾眼的改善未顯著優於安慰劑。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素C、維生素E</td><td className="p-3 border border-[#2a3a5a]">水晶體、視網膜</td><td className="p-3 border border-[#2a3a5a]">屬抗氧化營養素；與其他成分組成 AREDS2 時可延緩特定 AMD 惡化。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">鋅 (Zinc)</td><td className="p-3 border border-[#2a3a5a]">視網膜、黃斑部</td><td className="p-3 border border-[#2a3a5a]">視網膜含有較高濃度的鋅；在完整 AREDS2 配方中，可協助延緩特定程度 AMD 惡化。</td></tr>
-                  <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">銅 (Copper)</td><td className="p-3 border border-[#2a3a5a]">無特定單一結構</td><td className="p-3 border border-[#2a3a5a]">加入配方主要目的是防止長期高劑量鋅造成銅缺乏。</td></tr>
-                  <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素 B1、B12、葉酸</td><td className="p-3 border border-[#2a3a5a]">視神經</td><td className="p-3 border border-[#2a3a5a]">嚴重缺乏可能造成營養性視神經病變；主要作用是避免缺乏以維持神經傳導。</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div className="bg-[#2a1f1a] p-5 rounded-lg border border-[#e5b55e] mb-6">
-              <h3 className="text-[#e5b55e] text-[18px] font-bold mb-3">📚 主要資料來源</h3>
-              <ul className="text-[#a5b6cf] text-[14px] leading-[1.6] pl-5 m-0 space-y-1">
-                <li>中華民國發明專利第I5105744號〈用於治療眼疾的化合物〉</li>
-                <li>台灣綠蜂膠萃取物眼疾專利</li>
-                <li>美國國家眼科研究所 (NEI): AREDS / AREDS2 及 DREAM 乾眼研究</li>
-                <li>NIH 膳食補充品辦公室: 維生素A、Omega-3、鋅</li>
-                <li>Merck Manual: 營養性與毒性視神經病變</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {currentView === 'INFO_RPE' && (
-        <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
-          <div className="max-w-[800px] mx-auto pb-[50px]">
-            <button onClick={() => setCurrentView('INFO_NUTRIENT')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold shadow-lg">🔙 返回營養百科</button>
-            <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#2B579A] pb-2.5 mb-[20px] font-bold">🧬 為什麼視網膜色素上皮 (RPE) 很重要？</h2>
-            <div className="bg-[#161b22] p-6 rounded-xl border-l-4 border-[#E5B55E] mb-6">
-              <h3 className="text-[#E5B55E] text-[22px] font-bold mb-3">👁️ 眼睛後勤樞紐與專屬垃圾處理廠</h3>
-              <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0 mb-4">視網膜色素上皮細胞（RPE）緊貼著感光細胞，是維持視覺運作不可或缺的後勤防線。它具備以下五大關鍵生理功能：</p>
-              <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-3">
-                <li><strong className="text-[#fffdd0]">1. 運輸營養素：</strong>作為脈絡膜微血管與視網膜間的橋樑，將維生素、氧氣等營養素精準運送給感光細胞。</li>
-                <li><strong className="text-[#fffdd0]">2. 排除代謝廢物：</strong>感光細胞每天運作會產生大量代謝廢物，RPE 就像垃圾處理廠，負責吞噬並分解這些廢物。</li>
-                <li><strong className="text-[#fffdd0]">3. 分泌抗氧化因子：</strong>RPE 能分泌多種因子，維持眼內的抗氧化能力，保護脆弱的感光細胞免受強光與氧化壓力破壞。</li>
-                <li><strong className="text-[#fffdd0]">4. 穩定視網膜結構：</strong>作為血視網膜屏障（Blood-Retinal Barrier）的重要部分，維持視網膜與脈絡膜界面的組織結構穩固。</li>
-                <li><strong className="text-[#fffdd0]">5. 預防黃斑部病變：</strong>維持 RPE 的健康活力，能有效避免老化廢物堆積引發的發炎反應，是降低老年性黃斑部病變 (AMD) 發生風險的核心機制。</li>
-              </ul>
-            </div>
-            <div className="bg-[#162b2b] p-6 rounded-xl border-l-4 border-[#ff4d4d] mb-6">
-              <h3 className="text-[#ff4d4d] text-[22px] font-bold mb-3">☣️ 視力的隱形殺手：脂褐質 (Lipofuscin)</h3>
-              <p className="text-[#fffdd0] text-[16px] leading-[1.8] mb-4">在視覺運作的過程中，感光細胞會不斷代謝並產生廢棄物。這些廢棄物被 RPE 吞噬後，會殘留下無法被完全分解的物質，稱為<strong>「脂褐質 (Lipofuscin)」</strong>（一種衰老色素）。脂褐質對眼睛的影響極具破壞性：</p>
-              <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-2">
-                <li><strong className="text-[#fffdd0]">引發光毒性反應：</strong>脂褐質含有具備光毒性的螢光物質（如 A2E），當受到藍光或強光照射時，會產生大量的自由基與「氧化壓力」。</li>
-                <li><strong className="text-[#fffdd0]">摧毀細胞機能：</strong>過多的脂褐質會破壞 RPE 細胞內的溶酶體與粒線體，導致 RPE 細胞逐漸凋亡。</li>
-                <li><strong className="text-[#fffdd0]">引發黃斑部病變：</strong>當 RPE 無法再處理廢物時，這些物質會堆積在視網膜底層形成「隱結 (Drusen)」，這是引發老年性黃斑部病變 (AMD) 和視力喪失的關鍵元凶。</li>
-              </ul>
-            </div>
-            <div className="bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#00ffcc] mb-6">
-              <h3 className="text-[#00ffcc] text-[22px] font-bold mb-3">🛡️ RPE 是對抗脂褐質的唯一防線</h3>
-              <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0">RPE 是視網膜中唯一具備強大吞噬與代謝機制的細胞。健康的 RPE 能夠透過自身的抗氧化系統，中和脂褐質產生的毒性，並盡可能減緩其堆積速度。<br/><br/>一旦 RPE 失去活力或受損，脂褐質就會如同無法被清理的「核廢料」般引發一連串的發炎反應，最終導致上方依賴它的感光細胞餓死或毒死。因此，<strong>給予 RPE 充足的專屬滋養與抗氧化保護，維持 RPE 細胞的存活率與代謝活力，是預防眼部老化與病變的重中之重。</strong></p>
-            </div>
-            <div className="bg-[#2a1f1a] p-4 rounded-lg border border-[#e5b55e]">
-              <h3 className="text-[#e5b55e] text-[16px] font-bold mb-2">📚 醫學學理參考文獻</h3>
-              <p className="text-[#a5b6cf] text-[13px] leading-[1.6] m-0">Sparrow, J. R., & Boulton, M. (2005). RPE lipofuscin and its role in retinal pathobiology. Experimental eye research.<br/>Boulton, M., et al. (2001). Lipofuscin is a photoinducible free radical generator. Journal of photochemistry and photobiology.</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {currentView === 'CALENDAR' && (
-        <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
-          <div className="max-w-[800px] mx-auto pb-[50px]">
-            <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
-            <div className="w-full bg-[#161b22] rounded-2xl p-6 box-border shadow-[0_10px_25px_rgba(0,0,0,0.5)]">
-              <h2 className="text-[#E5B55E] text-center text-[32px] m-0 mb-[15px] font-bold">{calendarData.year} 年 {calendarData.month + 1} 月</h2>
-              <p className="text-[#8b9bb4] text-center text-[18px] m-0 mb-[5px]">建議搭配醫師推薦營養配方，每天復健三次</p>
-              <p className="text-[#8b9bb4] text-center text-[18px] m-0 mb-[25px]">還有最重要的眼睛要適度的休息</p>
-              <div className="grid grid-cols-7 gap-[5px] mb-[15px]">{['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="text-[#888] text-center text-[18px]">{d}</div>)}</div>
-              <div className="grid grid-cols-7 gap-y-2.5 gap-x-1.5">
-                {calendarData.days.map((cycles, idx) => (
-                  <div key={idx} className={`flex items-center justify-center w-[44px] h-[44px] mx-auto rounded-full text-[20px] font-bold ${cycles === -1 ? 'bg-transparent text-transparent' : cycles === 0 ? 'bg-[#2a3241] text-[#6b7280]' : cycles === 1 ? 'bg-[#4D96FF] text-white' : cycles === 2 ? 'bg-[#6BCB77] text-white' : 'bg-[#FF9F1C] text-white'} ${(idx - (calendarData.days.length - (new Date(calendarData.year, calendarData.month + 1, 0).getDate())) + 1) === calendarData.today ? 'border-2 border-[#E5B55E]' : ''}`}>
-                    {cycles === -1 ? '' : idx - (calendarData.days.length - (new Date(calendarData.year, calendarData.month + 1, 0).getDate())) + 1}
-                  </div>
-                ))}
+              
+              <div onClick={() => setCurrentView('CALENDAR')} className="w-full bg-[#161b22] border-2 border-[#4D96FF] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(77,150,255,0.2)] text-center transition-all duration-200 hover:scale-[1.02]">
+                <h3 className="text-[#4D96FF] text-[22px] mb-2 font-bold">📅 每日/每月復健進度</h3>
+                <p className="text-[#8b9bb4] text-[16px] m-0">點擊查看您的打卡紀錄，分享給家人與醫師</p>
               </div>
-              <button onClick={handleShareCalendar} className="w-full p-[18px] mt-[25px] bg-[#2B579A] text-white border-none rounded-xl text-[20px] font-bold cursor-pointer">▷ 傳送每日/每月復健次數</button>
+
+              {!isPremiumUnlocked && (
+                <div className="w-full bg-[#2a1f1a] border-2 border-[#ff4d4d] rounded-xl p-5 mb-5 shadow-[0_0_15px_rgba(255,77,77,0.2)] flex flex-col items-center">
+                  <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-2">🔒 啟 দর্শ動完整醫療級復健療程</h3>
+                  <p className="text-[#d1b0b0] text-[15px] text-center mb-4">請輸入診所開立之 30 天數位護眼計畫授權碼，解鎖全套模組。</p>
+                  <button onClick={() => setShowRedeemModal(true)} className="px-6 py-3 bg-[#ff4d4d] text-white font-bold rounded-full w-full max-w-[300px]">🎟️ 輸入處方授權碼</button>
+                </div>
+              )}
+              
+              <div className="flex flex-col gap-5 w-full">
+                <ModuleCard title="🚀 45秒快速舒緩" desc="結合遠眺聚焦、隨機白球衝擊與深層閉眼潤滑。" color="#FF6B6B" onClick={() => handleModuleAccess('sop', true)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard title="🔄 動態 3D 眼肌伸展" desc="引導眼球進行 ∞ 字型極限軌跡，強迫拉伸控制眼球的六條眼外肌。" color="#4D96FF" onClick={() => handleModuleAccess('stretch', true)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard title="🎮 睫狀肌深空追光" desc="【放鬆遊戲】死盯流星飛向深空，強迫睫狀肌徹底看遠放鬆。" color="#6BCB77" onClick={() => handleModuleAccess('chaser', true)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard title="🌌 星雲散焦與神經放鬆" desc="【深度冥想】釋放隧道視覺，同步 3D 粒子星雲進行共振呼吸。" color="#FFD93D" onClick={() => handleModuleAccess('breathe', true)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard title="🎯 Z 軸遠近對焦飛梭" desc="高強度睫狀肌重訓！利用極端遠近切換，恢復眼球對焦彈性。" color="#FF3366" onClick={() => handleModuleAccess('focus', true)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard title="🔍 互動式黃斑部評估" desc="專利級數位化阿姆斯勒方格表，包含左右眼自適應風險運算。" color="#9D4EDD" onClick={() => handleModuleAccess('amsler', false)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛在散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => handleModuleAccess('astigmatism', false)} isLocked={!isPremiumUnlocked} />
+              </div>
+
+              <div onClick={() => setCurrentView('INFO_NUTRIENT')} className="w-full bg-[#162b2b] border-2 border-[#00ffcc] rounded-xl p-5 cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.2)] text-center transition-all duration-200 hover:scale-[1.02] mt-2">
+                <h3 className="text-[#00ffcc] text-[22px] mb-2 font-bold">🔬 旗艦護眼營養百科</h3>
+                <p className="text-[#8b9bb4] text-[16px] m-0">點擊了解針對不同眼睛部位結構的專屬營養配方解析</p>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {currentView === 'INFO_MODULES' && (
-        <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
-          <div className="max-w-[800px] mx-auto pb-[50px]">
-            <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
-            <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#00ffcc] pb-2.5 mb-[15px] font-bold">🩺 數位復健模組學理與文獻探討</h2>
-            <div className="mb-8 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d] shadow-[0_0_10px_rgba(255,77,77,0.2)]">
-              <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-3 flex items-center gap-2"><span>⚠️</span> 醫療法規與免責聲明</h3>
-              <p className="text-[#d1b0b0] text-[16px] leading-[1.8] m-0">本應用程式定位為日常視覺疲勞之放鬆與保健輔助工具，<strong>非屬醫療器材</strong>。下方引述之醫學期刊僅作為視覺生理學及模組設計之學理背景參考，<strong>不代表本系統具有診斷、治療、矯正任何眼科疾病之療效</strong>。</p>
-            </div>
-            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FF6B6B]">
-              <h3 className="text-[#FF6B6B] text-[22px] font-bold mb-3">🚀 45秒快速舒緩</h3>
-              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>結合動態視覺刺激與淚膜穩定概念。輔助舒緩初期水晶體對焦壓力，並藉由閉眼動作輔助眼瞼板腺分泌油脂。</p>
-              <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Rosenfield, M. (2011). Computer vision syndrome... Ophthalmic and Physiological Optics.</span></div>
-            </div>
-            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#4D96FF]">
-              <h3 className="text-[#4D96FF] text-[22px] font-bold mb-3">🔄 動態 3D 眼肌伸展</h3>
-              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>透過眼球的極限軌跡追蹤（平滑追隨運動），引導六條眼外肌進行大範圍伸展活動，幫助眼周肌肉放鬆。</p>
-              <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Kim, S. D., et al. (2016). Effects of eye exercises... Journal of Physical Therapy Science.</span></div>
-            </div>
-            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#6BCB77]">
-              <h3 className="text-[#6BCB77] text-[22px] font-bold mb-3">🎮 睫狀肌深空追光</h3>
-              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>利用 3D 空間營造「光學無限遠（Optical Infinity）」的錯覺。引導視線向深空遠眺，協助控制水晶體的睫狀肌放鬆，作為輔助對抗因長時間近距離工作所引起的調節性疲勞之日常運動。</p>
-              <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Tosha, C., et al. (2009). Accommodation response and visual discomfort. Ophthalmic and Physiological Optics.</span></div>
-            </div>
-            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FFD93D]">
-              <h3 className="text-[#FFD93D] text-[22px] font-bold mb-3">🌌 星雲散焦與神經放鬆</h3>
-              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>透過解除中央凹對焦並刻意體驗「周邊視覺」，配合固定頻率的深度共振呼吸，能夠輔助調節自律神經張力，幫助放鬆身心與日常視覺壓力。</p>
-              <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Zaccaro, A., et al. (2018). How breath-control can change your life. Frontiers in Human Neuroscience.</span></div>
-            </div>
-            <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FF3366]">
-              <h3 className="text-[#FF3366] text-[22px] font-bold mb-3">🎯 Z 軸遠近對焦飛梭</h3>
-              <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>參考視覺活動中的「調節靈敏度（Accommodative Facility）」概念。藉由引導睫狀肌在看近與看遠之間進行快速切換活動，作為維持水晶體調節靈活度與反應速度的日常輔助練習。</p>
-              <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Sterner, B., et al. (2001). Accommodation facility training. Documenta Ophthalmologica.</span></div>
-            </div>
-            <div className="text-center mt-8">
-              <button onClick={() => setCurrentView('DASHBOARD')} className="px-[30px] py-[15px] bg-[#00ffcc] text-[#0f141e] border-none rounded-full text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(0,255,204,0.3)]">👉 返回大廳開始訓練</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {currentView === 'INFO_INTRO' && activeModule && (
-        <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
-          <div className="max-w-[800px] mx-auto pb-[50px]">
-            <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
-            <h2 className="text-[#fffdd0] text-[32px] pb-2.5 mb-[25px] flex items-center gap-2.5 font-bold" style={{ borderBottom: `2px solid ${medicalPrinciples[activeModule].color}` }}>
-              <span>{medicalPrinciples[activeModule].icon}</span> {medicalPrinciples[activeModule].title}
-            </h2>
-            <div className="bg-[#162b2b] p-6 rounded-xl mb-10 shadow-[0_0_15px_rgba(0,0,0,0.5)]" style={{ border: `1px solid ${medicalPrinciples[activeModule].color}` }}>
-              <h3 className="text-[22px] mb-[15px] flex items-center gap-2 font-bold" style={{ color: medicalPrinciples[activeModule].color }}>
-                <span>🩺</span> 數位復健醫學原理
-              </h3>
-              <p className="text-[#8b9bb4] text-[18px] leading-[1.8] m-0" dangerouslySetInnerHTML={{ __html: medicalPrinciples[activeModule].principle }}></p>
-            </div>
-            <div className="text-center">
-              <button onClick={() => startTraining(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {currentView === 'TRAINING' && (
-        <>
-          <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
-
-          {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
-            <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
-              <video 
-                ref={videoRef} 
-                className="w-full h-full object-cover transition-transform duration-300" 
-                style={{ transform: `scaleX(-1) rotate(${camRotation}deg)` }} 
-                playsInline 
-                muted 
-                autoPlay 
-              />
-              <button 
-                onClick={() => setCamRotation(prev => (prev + 90) % 360)}
-                className="absolute top-1 right-1 bg-black/60 p-1.5 rounded-full text-white text-[12px] opacity-60 hover:opacity-100 transition-opacity"
-              >
-                🔄
+        {currentView === 'INFO_NUTRIENT' && (
+          <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
+            <div className="max-w-[800px] mx-auto pb-[50px]">
+              <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold shadow-lg">🔙 返回大廳</button>
+              <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#00ffcc] pb-2.5 mb-[15px] font-bold">🔬 旗艦護眼營養部位百科</h2>
+              <div className="mb-6 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d] shadow-[0_0_10px_rgba(255,77,77,0.2)]">
+                <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-3 flex items-center gap-2"><span>⚠️</span> 醫療法規與免責聲明</h3>
+                <p className="text-[#d1b0b0] text-[16px] leading-[1.8] m-0">本頁面提供之營養素資訊僅供日常生理保健與學理參考，<strong>不代表任何產品具備診斷、治療或預防眼科疾病之療效</strong>。營養素通常是維持組織正常功能或降低缺乏風險，不能取代眼科檢查與治療。</p>
+              </div>
+              <p className="text-[#8b9bb4] text-[17px] leading-[1.6] mb-5 bg-[#162b2b] p-4 rounded-lg"><strong className="text-[#00ffcc]">閱讀重點｜</strong>眼睛是非常精密的器官，不同的解剖構造需要對應不同的關鍵營養素。單一成分無法顧及全眼健康，以下為具備醫學學理支持的營養素對應表：</p>
+              <button onClick={() => setCurrentView('INFO_RPE')} className="w-full py-4 mb-6 bg-[#2B579A] text-white border-none rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(43,87,154,0.4)] transition-transform hover:scale-[1.02]">
+                👉 深度解析：為什麼視網膜色素上皮 (RPE) 很重要？
               </button>
+              <div className="overflow-x-auto mb-[30px] rounded-lg shadow-lg">
+                <table className="w-full min-w-[600px] border-collapse text-[#fffdd0] text-[15px] leading-[1.6]">
+                  <thead><tr className="bg-[#1a2233] text-left"><th className="p-3 border border-[#2a3a5a] w-[25%]">關鍵營養素</th><th className="p-3 border border-[#2a3a5a] w-[25%]">主要作用部位</th><th className="p-3 border border-[#2a3a5a] w-[50%]">學理與功能性參考</th></tr></thead>
+                  <tbody>
+                    <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">葉黃素、玉米黃素</td><td className="p-3 border border-[#2a3a5a]">視網膜黃斑部、中央凹</td><td className="p-3 border border-[#2a3a5a]">構成黃斑色素，與中央視力、辨色及對比敏感度有關；是最直接對應黃斑部的營養素。</td></tr>
+                    <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Propolins<br/>(尤其 Propolin G)</td><td className="p-3 border border-[#2a3a5a]">視網膜色素上皮 (RPE)；黃斑部外層</td><td className="p-3 border border-[#2a3a5a]">細胞實驗顯示可提高氧化或缺氧損傷下的存活；動物模型中顯示 RPE 功能改善。目前屬細胞與動物前臨床證據。</td></tr>
+                    <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素A、β-胡蘿蔔素</td><td className="p-3 border border-[#2a3a5a]">視網膜桿狀細胞；角膜、結膜</td><td className="p-3 border border-[#2a3a5a]">參與視紫質形成並維持眼表上皮；缺乏時可能導致乾眼與角膜損傷。</td></tr>
+                    <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">DHA</td><td className="p-3 border border-[#2a3a5a]">視網膜感光細胞</td><td className="p-3 border border-[#2a3a5a]">感光細胞膜的重要結構成分，在視網膜含量很高。</td></tr>
+                    <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">Omega-3<br/>(EPA、DHA)</td><td className="p-3 border border-[#2a3a5a]">淚膜、瞼板腺、眼表</td><td className="p-3 border border-[#2a3a5a]">可能影響發炎與淚膜油脂層；但大型研究中對中重度乾眼的改善未顯著優於安慰劑。</td></tr>
+                    <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素C、維生素E</td><td className="p-3 border border-[#2a3a5a]">水晶體、視網膜</td><td className="p-3 border border-[#2a3a5a]">屬抗氧化營養素；與其他成分組成 AREDS2 時可延緩特定 AMD 惡化。</td></tr>
+                    <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">鋅 (Zinc)</td><td className="p-3 border border-[#2a3a5a]">視網膜、黃斑部</td><td className="p-3 border border-[#2a3a5a]">視網膜含有較高濃度的鋅；在完整 AREDS2 配方中，可協助延緩特定程度 AMD 惡化。</td></tr>
+                    <tr className="bg-[#162b2b]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">銅 (Copper)</td><td className="p-3 border border-[#2a3a5a]">無特定單一結構</td><td className="p-3 border border-[#2a3a5a]">加入配方主要目的是防止長期高劑量鋅造成銅缺乏。</td></tr>
+                    <tr className="bg-[#121824]"><td className="p-3 border border-[#2a3a5a] text-[#00ffcc] font-bold">維生素 B1、B12、葉酸</td><td className="p-3 border border-[#2a3a5a]">視神經</td><td className="p-3 border border-[#2a3a5a]">嚴重缺乏可能造成營養性視神經病變；主要作用是避免缺乏以維持神經傳導。</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div className="bg-[#2a1f1a] p-5 rounded-lg border border-[#e5b55e] mb-6">
+                <h3 className="text-[#e5b55e] text-[18px] font-bold mb-3">📚 主要資料來源</h3>
+                <ul className="text-[#a5b6cf] text-[14px] leading-[1.6] pl-5 m-0 space-y-1">
+                  <li>中華民國發明專利第I5105744號〈用於治療眼疾的化合物〉</li>
+                  <li>台灣綠蜂膠萃取物眼疾專利</li>
+                  <li>美國國家眼科研究所 (NEI): AREDS / AREDS2 及 DREAM 乾眼研究</li>
+                  <li>NIH 膳食補充品辦公室: 維生素A、Omega-3、鋅</li>
+                  <li>Merck Manual: 營養性與毒性視神經病變</li>
+                </ul>
+              </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {trackingState === 'INITIALIZING' && (
-            <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
-              <div className="text-[60px] mb-4 animate-spin">⏳</div>
-              <h2 className="text-[#00ffcc] text-[28px] font-bold mb-4 tracking-widest">AI 視覺引擎載入中</h2>
-              <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                正在啟動前置鏡頭與安全辨識模組...<br/>這可能需要幾秒鐘的時間，請稍候。
-              </p>
+        {currentView === 'INFO_RPE' && (
+          <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
+            <div className="max-w-[800px] mx-auto pb-[50px]">
+              <button onClick={() => setCurrentView('INFO_NUTRIENT')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold shadow-lg">🔙 返回營養百科</button>
+              <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#2B579A] pb-2.5 mb-[20px] font-bold">🧬 為什麼視網膜色素上皮 (RPE) 很重要？</h2>
+              <div className="bg-[#161b22] p-6 rounded-xl border-l-4 border-[#E5B55E] mb-6">
+                <h3 className="text-[#E5B55E] text-[22px] font-bold mb-3">👁️ 眼睛後勤樞紐與專屬垃圾處理廠</h3>
+                <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0 mb-4">視網膜色素上皮細胞（RPE）緊貼著感光細胞，是維持視覺運作不可或缺的後勤防線。它具備以下五大關鍵生理功能：</p>
+                <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-3">
+                  <li><strong className="text-[#fffdd0]">1. 運輸營養素：</strong>作為脈絡膜微血管與視網膜間的橋樑，將維生素、氧氣等營養素精準運送給感光細胞。</li>
+                  <li><strong className="text-[#fffdd0]">2. 排除代謝廢物：</strong>感光細胞每天運作會產生大量代謝廢物，RPE 就像垃圾處理廠，負責吞噬並分解這些廢物。</li>
+                  <li><strong className="text-[#fffdd0]">3. 分泌抗氧化因子：</strong>RPE 能分泌多種因子，維持眼內的抗氧化能力，保護脆弱的感光細胞免受強光與氧化壓力破壞。</li>
+                  <li><strong className="text-[#fffdd0]">4. 穩定視網膜結構：</strong>作為血視網膜屏障（Blood-Retinal Barrier）的重要部分，維持視網膜與脈絡膜界面的組織結構穩固。</li>
+                  <li><strong className="text-[#fffdd0]">5. 預防黃斑部病變：</strong>維持 RPE 的健康活力，能有效避免老化廢物堆積引發的發炎反應，是降低老年性黃斑部病變 (AMD) 發生風險的核心機制。</li>
+                </ul>
+              </div>
+              <div className="bg-[#162b2b] p-6 rounded-xl border-l-4 border-[#ff4d4d] mb-6">
+                <h3 className="text-[#ff4d4d] text-[22px] font-bold mb-3">☣️ 視力的隱形殺手：脂褐質 (Lipofuscin)</h3>
+                <p className="text-[#fffdd0] text-[16px] leading-[1.8] mb-4">在視覺運作的過程中，感光細胞會不斷代謝並產生廢棄物。這些廢棄物被 RPE 吞噬後，會殘留下無法被完全分解的物質，稱為<strong>「脂褐質 (Lipofuscin)」</strong>（一種衰老色素）。脂褐質對眼睛的影響極具破壞性：</p>
+                <ul className="text-[#8b9bb4] text-[16px] leading-[1.8] pl-5 m-0 space-y-2">
+                  <li><strong className="text-[#fffdd0]">引發光毒性反應：</strong>脂褐質含有具備光毒性的螢光物質（如 A2E），當受到藍光或強光照射時，會產生大量的自由基與「氧化壓力」。</li>
+                  <li><strong className="text-[#fffdd0]">摧毀細胞機能：</strong>過多的脂褐質會破壞 RPE 細胞內的溶酶體與粒線體，導致 RPE 細胞逐漸凋亡。</li>
+                  <li><strong className="text-[#fffdd0]">引發黃斑部病變：</strong>當 RPE 無法再處理廢物時，這些物質會堆積在視網膜底層形成「隱結 (Drusen)」，這是引發老年性黃斑部病變 (AMD) 和視力喪失的關鍵元凶。</li>
+                </ul>
+              </div>
+              <div className="bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#00ffcc] mb-6">
+                <h3 className="text-[#00ffcc] text-[22px] font-bold mb-3">🛡️ RPE 是對抗脂褐質的唯一防線</h3>
+                <p className="text-[#fffdd0] text-[16px] leading-[1.8] m-0">RPE 是視網膜中唯一具備強大吞噬與代謝機制的細胞。健康的 RPE 能夠透過自身的抗氧化系統，中和脂褐質產生的毒性，並盡可能減緩其堆積速度。<br/><br/>一旦 RPE 失去活力或受損，脂褐質就會如同無法被清理的「核廢料」般引發一連串的發炎反應，最終導致上方依賴它的感光細胞餓死或毒死。因此，<strong>給予 RPE 充足的專屬滋養與抗氧化保護，維持 RPE 細胞的存活率與代謝活力，是預防眼部老化與病變的重中之重。</strong></p>
+              </div>
+              <div className="bg-[#2a1f1a] p-4 rounded-lg border border-[#e5b55e]">
+                <h3 className="text-[#e5b55e] text-[16px] font-bold mb-2">📚 醫學學理參考文獻</h3>
+                <p className="text-[#a5b6cf] text-[13px] leading-[1.6] m-0">Sparrow, J. R., & Boulton, M. (2005). RPE lipofuscin and its role in retinal pathobiology. Experimental eye research.<br/>Boulton, M., et al. (2001). Lipofuscin is a photoinducible free radical generator. Journal of photochemistry and photobiology.</p>
+              </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
-            <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
-              <div className="text-[60px] mb-4">🛑</div>
-              <h2 className="text-[#E5B55E] text-[28px] font-bold mb-4 tracking-widest">距離螢幕太近</h2>
-              <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                訓練與時間已自動暫停。<br/>請退後至 <strong className="text-[#00ffcc]">20 公分安全距離</strong> 外。
-              </p>
+        {currentView === 'CALENDAR' && (
+          <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
+            <div className="max-w-[800px] mx-auto pb-[50px]">
+              <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
+              <div className="w-full bg-[#161b22] rounded-2xl p-6 box-border shadow-[0_10px_25px_rgba(0,0,0,0.5)]">
+                <h2 className="text-[#E5B55E] text-center text-[32px] m-0 mb-[15px] font-bold">{calendarData.year} 年 {calendarData.month + 1} 月</h2>
+                <p className="text-[#8b9bb4] text-center text-[18px] m-0 mb-[5px]">建議搭配醫師推薦營養配方，每天復健三次</p>
+                <p className="text-[#8b9bb4] text-center text-[18px] m-0 mb-[25px]">還有最重要的眼睛要適度的休息</p>
+                <div className="grid grid-cols-7 gap-[5px] mb-[15px]">{['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="text-[#888] text-center text-[18px]">{d}</div>)}</div>
+                <div className="grid grid-cols-7 gap-y-2.5 gap-x-1.5">
+                  {calendarData.days.map((cycles, idx) => (
+                    <div key={idx} className={`flex items-center justify-center w-[44px] h-[44px] mx-auto rounded-full text-[20px] font-bold ${cycles === -1 ? 'bg-transparent text-transparent' : cycles === 0 ? 'bg-[#2a3241] text-[#6b7280]' : cycles === 1 ? 'bg-[#4D96FF] text-white' : cycles === 2 ? 'bg-[#6BCB77] text-white' : 'bg-[#FF9F1C] text-white'} ${(idx - (calendarData.days.length - (new Date(calendarData.year, calendarData.month + 1, 0).getDate())) + 1) === calendarData.today ? 'border-2 border-[#E5B55E]' : ''}`}>
+                      {cycles === -1 ? '' : idx - (calendarData.days.length - (new Date(calendarData.year, calendarData.month + 1, 0).getDate())) + 1}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={handleShareCalendar} className="w-full p-[18px] mt-[25px] bg-[#2B579A] text-white border-none rounded-xl text-[20px] font-bold cursor-pointer">▷ 傳送每日/每月復健次數</button>
+              </div>
             </div>
-          )}
+          </div>
+        )}
 
-          {trackingState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
-            <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
-              <div className="text-[60px] mb-4">⚠️</div>
-              <h2 className="text-[#ff4d4d] text-[28px] font-bold mb-4 tracking-widest">頭部偏離或失去視線</h2>
-              <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                訓練與時間已暫停。<br/>請確保<strong className="text-[#E5B55E]">臉部正對螢幕</strong>。
-              </p>
+        {currentView === 'INFO_MODULES' && (
+          <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
+            <div className="max-w-[800px] mx-auto pb-[50px]">
+              <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
+              <h2 className="text-[#fffdd0] text-[28px] border-b-2 border-[#00ffcc] pb-2.5 mb-[15px] font-bold">🩺 數位復健模組學理與文獻探討</h2>
+              <div className="mb-8 bg-[#1f1616] p-5 rounded-lg border border-[#ff4d4d] shadow-[0_0_10px_rgba(255,77,77,0.2)]">
+                <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-3 flex items-center gap-2"><span>⚠️</span> 醫療法規與免責聲明</h3>
+                <p className="text-[#d1b0b0] text-[16px] leading-[1.8] m-0">本應用程式定位為日常視覺疲勞之放鬆與保健輔助工具，<strong>非屬醫療器材</strong>。下方引述之醫學期刊僅作為視覺生理學及模組設計之學理背景參考，<strong>不代表本系統具有診斷、治療、矯正任何眼科疾病之療效</strong>。</p>
+              </div>
+              <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FF6B6B]">
+                <h3 className="text-[#FF6B6B] text-[22px] font-bold mb-3">🚀 45秒快速舒緩</h3>
+                <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>結合動態視覺刺激與淚膜穩定概念。輔助舒緩初期水晶體對焦壓力，並藉由閉眼動作輔助眼瞼板腺分泌油脂。</p>
+                <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Rosenfield, M. (2011). Computer vision syndrome... Ophthalmic and Physiological Optics.</span></div>
+              </div>
+              <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#4D96FF]">
+                <h3 className="text-[#4D96FF] text-[22px] font-bold mb-3">🔄 動態 3D 眼肌伸展</h3>
+                <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>透過眼球的極限軌跡追蹤（平滑追隨運動），引導六條眼外肌進行大範圍伸展活動，幫助眼周肌肉放鬆。</p>
+                <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Kim, S. D., et al. (2016). Effects of eye exercises... Journal of Physical Therapy Science.</span></div>
+              </div>
+              <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#6BCB77]">
+                <h3 className="text-[#6BCB77] text-[22px] font-bold mb-3">🎮 睫狀肌深空追光</h3>
+                <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>利用 3D 空間營造「光學無限遠（Optical Infinity）」的錯覺。引導視線向深空遠眺，協助控制水晶體的睫狀肌放鬆，作為輔助對抗因長時間近距離工作所引起的調節性疲勞之日常運動。</p>
+                <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Tosha, C., et al. (2009). Accommodation response and visual discomfort. Ophthalmic and Physiological Optics.</span></div>
+              </div>
+              <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FFD93D]">
+                <h3 className="text-[#FFD93D] text-[22px] font-bold mb-3">🌌 星雲散焦與神經放鬆</h3>
+                <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>透過解除中央凹對焦並刻意體驗「周邊視覺」，配合固定頻率的深度共振呼吸，能夠輔助調節自律神經張力，幫助放鬆身心與日常視覺壓力。</p>
+                <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Zaccaro, A., et al. (2018). How breath-control can change your life. Frontiers in Human Neuroscience.</span></div>
+              </div>
+              <div className="mb-6 bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#FF3366]">
+                <h3 className="text-[#FF3366] text-[22px] font-bold mb-3">🎯 Z 軸遠近對焦飛梭</h3>
+                <p className="text-[#fffdd0] text-[17px] leading-[1.6] mb-4"><strong>設計原理：</strong>參考視覺活動中的「調節靈敏度（Accommodative Facility）」概念。藉由引導睫狀肌在看近與看遠之間進行快速切換活動，作為維持水晶體調節靈活度與反應速度的日常輔助練習。</p>
+                <div className="bg-[#0f141e] p-4 rounded-lg"><span className="text-[#8b9bb4] text-[14px] block mb-1">文獻參考：Sterner, B., et al. (2001). Accommodation facility training. Documenta Ophthalmologica.</span></div>
+              </div>
+              <div className="text-center mt-8">
+                <button onClick={() => setCurrentView('DASHBOARD')} className="px-[30px] py-[15px] bg-[#00ffcc] text-[#0f141e] border-none rounded-full text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(0,255,204,0.3)]">👉 返回大廳開始訓練</button>
+              </div>
             </div>
-          )}
+          </div>
+        )}
 
-          <div 
-            className="absolute px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10" 
-            style={{
-              transition: 'all 1.2s cubic-bezier(0.25,1,0.5,1)',
-              ...(isLandscape
-                ? uiState.position === 'CENTER'
-                  ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '80%' }
-                  : { top: '50%', left: '75%', transform: 'translate(-50%, -50%)', width: '45%' }
-                : uiState.position === 'CENTER'
-                  ? { top: '45%', left: '50%', transform: 'translate(-50%, -50%)', width: '100%' }
-                  : { top: '75%', left: '50%', transform: 'translate(-50%, -50%)', width: '100%' }
-              )
-            }}
-          >
-            <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] flex flex-col items-center justify-center">{uiState.title}</div>
-            <div className="w-full text-center text-[#00ffcc] font-mono text-[24px] mb-[20px]">{uiState.timer}</div>
+        {currentView === 'INFO_INTRO' && activeModule && (
+          <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border">
+            <div className="max-w-[800px] mx-auto pb-[50px]">
+              <button onClick={() => setCurrentView('DASHBOARD')} className="px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg mb-5 cursor-pointer text-[18px] font-bold">🔙 返回大廳</button>
+              <h2 className="text-[#fffdd0] text-[32px] pb-2.5 mb-[25px] flex items-center gap-2.5 font-bold" style={{ borderBottom: `2px solid ${medicalPrinciples[activeModule].color}` }}>
+                <span>{medicalPrinciples[activeModule].icon}</span> {medicalPrinciples[activeModule].title}
+              </h2>
+              <div className="bg-[#162b2b] p-6 rounded-xl mb-10 shadow-[0_0_15px_rgba(0,0,0,0.5)]" style={{ border: `1px solid ${medicalPrinciples[activeModule].color}` }}>
+                <h3 className="text-[22px] mb-[15px] flex items-center gap-2 font-bold" style={{ color: medicalPrinciples[activeModule].color }}>
+                  <span>🩺</span> 數位復健醫學原理
+                </h3>
+                <p className="text-[#8b9bb4] text-[18px] leading-[1.8] m-0" dangerouslySetInnerHTML={{ __html: medicalPrinciples[activeModule].principle }}></p>
+              </div>
+              <div className="text-center">
+                <button onClick={() => startTraining(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {currentView === 'TRAINING' && (
+          <>
+            <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
             
-            {uiState.showInput && (
-              <div className="flex flex-col gap-4 w-full max-w-[300px] pointer-events-auto mt-4">
-                <button onClick={() => handleDiagnosticInput('NORMAL')} className="w-full py-4 bg-[#162b2b] border-2 border-[#00ffcc] text-[#00ffcc] rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.3)]">✅ 正常 (清晰無異常)</button>
-                <button onClick={() => handleDiagnosticInput('ABNORMAL')} className="w-full py-4 bg-[#2b1616] border-2 border-[#ff4d4d] text-[#ff4d4d] rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_0_15px_rgba(255,77,77,0.3)]">❌ 異常 (有扭曲/模糊/黑影)</button>
+            {/* 【核心修正】將轉向按鈕恢復，點擊後會通知 3D 引擎與外層容器切換長寬對調 */}
+            <button
+               onClick={() => {
+                   const newVal = !isSimulatedLandscape;
+                   setIsSimulatedLandscape(newVal);
+                   gameState.current.isSimulatedLandscape = newVal;
+                   setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+               }}
+               className="absolute top-5 right-5 z-20 flex items-center justify-center gap-2 bg-[#1a2233]/70 border border-[#2a3a5a] px-4 py-2 rounded-full backdrop-blur-md pointer-events-auto shadow-lg text-[#8b9bb4] hover:text-[#00ffcc] transition-colors"
+            >
+              <span className="text-[18px]">🔄</span>
+              <span className="text-[14px] font-bold tracking-wide">切換轉向</span>
+            </button>
+
+            {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
+              <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
+                <video 
+                  ref={videoRef} 
+                  className="w-full h-full object-cover transition-transform duration-300" 
+                  style={{ transform: `scaleX(-1) rotate(${camRotation}deg)` }} 
+                  playsInline 
+                  muted 
+                  autoPlay 
+                />
+                <button 
+                  onClick={() => setCamRotation(prev => (prev + 90) % 360)}
+                  className="absolute top-1 right-1 bg-black/60 p-1.5 rounded-full text-white text-[12px] opacity-60 hover:opacity-100 transition-opacity"
+                >
+                  🔄
+                </button>
               </div>
             )}
-            
-            {uiState.showContinue && (
-              <button onClick={() => { gameState.current.isWaitingForRightEye = false; playDingSound(); setUiState(prev => ({...prev, showContinue: false})); }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
+
+            {trackingState === 'INITIALIZING' && (
+              <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
+                <div className="text-[60px] mb-4 animate-spin">⏳</div>
+                <h2 className="text-[#00ffcc] text-[28px] font-bold mb-4 tracking-widest">AI 視覺引擎載入中</h2>
+                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
+                  正在啟動前置鏡頭與安全辨識模組...<br/>這可能需要幾秒鐘的時間，請稍候。
+                </p>
+              </div>
             )}
-          </div>
-        </>
-      )}
 
-      {currentView === 'TEST_REPORT' && (
-        <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border flex flex-col items-center justify-center">
-          <div className="w-full max-w-[600px] bg-[#1a2233] p-8 rounded-2xl border-2 border-[#9D4EDD] shadow-[0_0_25px_rgba(157,78,221,0.3)] mt-[80px] mb-[40px]">
-            <h2 className="text-[#fffdd0] text-[28px] text-center border-b-2 border-[#9D4EDD] pb-3 mb-[20px] font-bold">📄 數位視覺評估報告</h2>
-            <div className="mb-6 bg-[#1f1616] p-4 rounded-lg border border-[#ff4d4d]">
-              <p className="text-[#d1b0b0] text-[15px] leading-[1.6] m-0 text-center">⚠️ 免責聲明：本報告基於您的主觀輸入，僅供日常保健評估參考，不代表醫學診斷。若有異常請立即就醫。</p>
-            </div>
-            <div className="flex justify-between items-center bg-[#161b22] p-5 rounded-xl mb-4"><span className="text-[#fffdd0] text-[20px]">左眼評估結果</span><span className={`text-[22px] font-bold ${testResults.leftEye === 'NORMAL' ? 'text-[#00ffcc]' : 'text-[#ff4d4d]'}`}>{testResults.leftEye === 'NORMAL' ? '✅ 正常' : '❌ 發現異常'}</span></div>
-            <div className="flex justify-between items-center bg-[#161b22] p-5 rounded-xl mb-6"><span className="text-[#fffdd0] text-[20px]">右眼評估結果</span><span className={`text-[22px] font-bold ${testResults.rightEye === 'NORMAL' ? 'text-[#00ffcc]' : 'text-[#ff4d4d]'}`}>{testResults.rightEye === 'NORMAL' ? '✅ 正常' : '❌ 發現異常'}</span></div>
-            <div className="bg-[#2a1f1a] p-5 rounded-xl border border-[#e5b55e] mb-8">
-              <h3 className="text-[#e5b55e] text-[20px] font-bold mb-2">🧠 系統建議與邏輯運算回饋</h3>
-              <p className="text-[#fffdd0] text-[16px] leading-[1.6] m-0">{(testResults.leftEye === 'NORMAL' && testResults.rightEye === 'NORMAL') ? "太棒了！您的雙眼視覺狀態良好。請繼續保持良好的用眼習慣，並建議搭配營養配方與數位眼肌訓練模組作為日常保養。" : "系統運算警告：偵測到潛在的視覺扭曲或模糊異常。這可能是黃斑部或散光軸向的疲勞警訊，強烈建議您盡速尋求專業眼科醫師的精密儀器檢查！"}</p>
-            </div>
-            <button onClick={returnToDashboard} className="w-full py-4 bg-[#9D4EDD] text-white rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(157,78,221,0.5)]">完成並返回大廳</button>
-          </div>
-        </div>
-      )}
+            {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
+              <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
+                <div className="text-[60px] mb-4">🛑</div>
+                <h2 className="text-[#E5B55E] text-[28px] font-bold mb-4 tracking-widest">距離螢幕太近</h2>
+                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
+                  訓練與時間已自動暫停。<br/>請退後至 <strong className="text-[#00ffcc]">20 公分安全距離</strong> 外。
+                </p>
+              </div>
+            )}
 
-      {showRedeemModal && (
-        <div className="absolute inset-0 z-[100] bg-black/80 flex items-center justify-center p-5 backdrop-blur-sm">
-          <div className="bg-[#1a2233] border-2 border-[#00ffcc] p-6 rounded-2xl w-full max-w-[400px] shadow-[0_0_25px_rgba(0,255,204,0.3)] text-center">
-            <h3 className="text-[#fffdd0] text-[22px] font-bold mb-3">🎟️ 輸入數位處方授權碼</h3>
-            <p className="text-[#8b9bb4] text-[14px] mb-4">請輸入診所配發之 12 碼專屬序號 (測試碼: EYE-A8F2-99B1)</p>
-            <input 
-              type="text" 
-              placeholder="例如: EYE-XXXX-XXXX" 
-              value={redeemCode}
-              onChange={(e) => setRedeemCode(e.target.value)}
-              className="w-full p-3 bg-[#0f141e] border border-[#2a3a5a] text-[#fffdd0] rounded-xl text-center text-[18px] mb-5 outline-none focus:border-[#00ffcc]"
-            />
-            <div className="flex gap-3">
-              <button onClick={() => setShowRedeemModal(false)} className="flex-1 py-3 bg-[#2a3241] text-[#8b9bb4] font-bold rounded-xl">取消</button>
-              <button onClick={handleRedeemCode} className="flex-1 py-3 bg-[#00ffcc] text-[#0f141e] font-bold rounded-xl">確認解鎖</button>
+            {trackingState === 'LOST' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
+              <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
+                <div className="text-[60px] mb-4">⚠️</div>
+                <h2 className="text-[#ff4d4d] text-[28px] font-bold mb-4 tracking-widest">頭部偏離或失去視線</h2>
+                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
+                  訓練與時間已暫停。<br/>請確保<strong className="text-[#E5B55E]">臉部正對螢幕</strong>。
+                </p>
+              </div>
+            )}
+
+            <div 
+              className="absolute px-5 box-border flex flex-col items-center justify-center text-center pointer-events-none drop-shadow-[0px_4px_15px_rgba(0,0,0,0.9)] z-10" 
+              style={{
+                transition: 'all 1.2s cubic-bezier(0.25,1,0.5,1)',
+                ...(isEffectiveLandscape
+                  ? uiState.position === 'CENTER'
+                    ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: '80%' }
+                    : { top: '50%', left: '75%', transform: 'translate(-50%, -50%)', width: '45%' }
+                  : uiState.position === 'CENTER'
+                    ? { top: '45%', left: '50%', transform: 'translate(-50%, -50%)', width: '100%' }
+                    : { top: '75%', left: '50%', transform: 'translate(-50%, -50%)', width: '100%' }
+                )
+              }}
+            >
+              <div className="w-full text-center text-[#fffdd0] text-[26px] font-bold tracking-[1px] mb-[15px] leading-[1.5] flex flex-col items-center justify-center">{uiState.title}</div>
+              <div className="w-full text-center text-[#00ffcc] font-mono text-[24px] mb-[20px]">{uiState.timer}</div>
+              
+              {uiState.showInput && (
+                <div className="flex flex-col gap-4 w-full max-w-[300px] pointer-events-auto mt-4">
+                  <button onClick={() => handleDiagnosticInput('NORMAL')} className="w-full py-4 bg-[#162b2b] border-2 border-[#00ffcc] text-[#00ffcc] rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_0_15px_rgba(0,255,204,0.3)]">✅ 正常 (清晰無異常)</button>
+                  <button onClick={() => handleDiagnosticInput('ABNORMAL')} className="w-full py-4 bg-[#2b1616] border-2 border-[#ff4d4d] text-[#ff4d4d] rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_0_15px_rgba(255,77,77,0.3)]">❌ 異常 (有扭曲/模糊/黑影)</button>
+                </div>
+              )}
+              
+              {uiState.showContinue && (
+                <button onClick={() => { gameState.current.isWaitingForRightEye = false; playDingSound(); setUiState(prev => ({...prev, showContinue: false})); }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
+              )}
+            </div>
+          </>
+        )}
+
+        {currentView === 'TEST_REPORT' && (
+          <div className="absolute inset-0 z-50 bg-[#0f141e] overflow-y-auto p-5 box-border flex flex-col items-center justify-center">
+            <div className="w-full max-w-[600px] bg-[#1a2233] p-8 rounded-2xl border-2 border-[#9D4EDD] shadow-[0_0_25px_rgba(157,78,221,0.3)] mt-[80px] mb-[40px]">
+              <h2 className="text-[#fffdd0] text-[28px] text-center border-b-2 border-[#9D4EDD] pb-3 mb-[20px] font-bold">📄 數位視覺評估報告</h2>
+              <div className="mb-6 bg-[#1f1616] p-4 rounded-lg border border-[#ff4d4d]">
+                <p className="text-[#d1b0b0] text-[15px] leading-[1.6] m-0 text-center">⚠️ 免責聲明：本報告基於您的主觀輸入，僅供日常保健評估參考，不代表醫學診斷。若有異常請立即就醫。</p>
+              </div>
+              <div className="flex justify-between items-center bg-[#161b22] p-5 rounded-xl mb-4"><span className="text-[#fffdd0] text-[20px]">左眼評估結果</span><span className={`text-[22px] font-bold ${testResults.leftEye === 'NORMAL' ? 'text-[#00ffcc]' : 'text-[#ff4d4d]'}`}>{testResults.leftEye === 'NORMAL' ? '✅ 正常' : '❌ 發現異常'}</span></div>
+              <div className="flex justify-between items-center bg-[#161b22] p-5 rounded-xl mb-6"><span className="text-[#fffdd0] text-[20px]">右眼評估結果</span><span className={`text-[22px] font-bold ${testResults.rightEye === 'NORMAL' ? 'text-[#00ffcc]' : 'text-[#ff4d4d]'}`}>{testResults.rightEye === 'NORMAL' ? '✅ 正常' : '❌ 發現異常'}</span></div>
+              <div className="bg-[#2a1f1a] p-5 rounded-xl border border-[#e5b55e] mb-8">
+                <h3 className="text-[#e5b55e] text-[20px] font-bold mb-2">🧠 系統建議與邏輯運算回饋</h3>
+                <p className="text-[#fffdd0] text-[16px] leading-[1.6] m-0">{(testResults.leftEye === 'NORMAL' && testResults.rightEye === 'NORMAL') ? "太棒了！您的雙眼視覺狀態良好。請繼續保持良好的用眼習慣，並建議搭配營養配方與數位眼肌訓練模組作為日常保養。" : "系統運算警告：偵測到潛在的視覺扭曲或模糊異常。這可能是黃斑部或散光軸向的疲勞警訊，強烈建議您盡速尋求專業眼科醫師的精密儀器檢查！"}</p>
+              </div>
+              <button onClick={returnToDashboard} className="w-full py-4 bg-[#9D4EDD] text-white rounded-xl text-[20px] font-bold cursor-pointer shadow-[0_4px_15px_rgba(157,78,221,0.5)]">完成並返回大廳</button>
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+        {showRedeemModal && (
+          <div className="absolute inset-0 z-[100] bg-black/80 flex items-center justify-center p-5 backdrop-blur-sm">
+            <div className="bg-[#1a2233] border-2 border-[#00ffcc] p-6 rounded-2xl w-full max-w-[400px] shadow-[0_0_25px_rgba(0,255,204,0.3)] text-center">
+              <h3 className="text-[#fffdd0] text-[22px] font-bold mb-3">🎟️ 輸入數位處方授權碼</h3>
+              <p className="text-[#8b9bb4] text-[14px] mb-4">請輸入診所配發之 12 碼專屬序號 (測試碼: EYE-A8F2-99B1)</p>
+              <input 
+                type="text" 
+                placeholder="例如: EYE-XXXX-XXXX" 
+                value={redeemCode}
+                onChange={(e) => setRedeemCode(e.target.value)}
+                className="w-full p-3 bg-[#0f141e] border border-[#2a3a5a] text-[#fffdd0] rounded-xl text-center text-[18px] mb-5 outline-none focus:border-[#00ffcc]"
+              />
+              <div className="flex gap-3">
+                <button onClick={() => setShowRedeemModal(false)} className="flex-1 py-3 bg-[#2a3241] text-[#8b9bb4] font-bold rounded-xl">取消</button>
+                <button onClick={handleRedeemCode} className="flex-1 py-3 bg-[#00ffcc] text-[#0f141e] font-bold rounded-xl">確認解鎖</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

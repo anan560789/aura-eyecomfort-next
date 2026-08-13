@@ -54,8 +54,11 @@ export default function EyeComfortApp() {
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
   const [manualCamAngle, setManualCamAngle] = useState<number>(0);
 
+  // 【核心狀態全部補齊】儲存實體長寬與混合式轉向邏輯
   const [dim, setDim] = useState({ w: 0, h: 0 });
-  const [deviceUiAngle, setDeviceUiAngle] = useState<number>(0);
+  const [isSimulatedLandscape, setIsSimulatedLandscape] = useState<boolean>(false);
+  const [activeGyroAngle, setActiveGyroAngle] = useState<number>(90);
+  const gyroAngleRef = useRef<number>(90);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
@@ -72,12 +75,14 @@ export default function EyeComfortApp() {
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
-    isSimulatedLandscape: false
+    isSimulatedLandscape: false, // 補齊此狀態
+    deviceUiAngle: 0 // 補齊此狀態
   });
 
   useEffect(() => {
     const updateDim = () => {
       setDim({ w: window.innerWidth, h: window.innerHeight });
+      // 防衝突機制：使用者解鎖實體翻轉時，關閉虛擬翻轉
       if (window.innerWidth > window.innerHeight && gameState.current.isSimulatedLandscape) {
         setIsSimulatedLandscape(false);
         gameState.current.isSimulatedLandscape = false;
@@ -106,23 +111,34 @@ export default function EyeComfortApp() {
     }
   };
 
+  // 【核心機制：持續更新陀螺儀數值，但不自動翻轉】
   const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
     const gamma = event.gamma; 
     const beta = event.beta;   
     if (gamma === null || gamma === undefined || beta === null) return;
     
+    // 平放時不亂抓數值
     if (Math.abs(beta) < 20 || Math.abs(beta) > 160) return;
 
-    let newAngle = gameState.current.isSimulatedLandscape ? (gamma > 45 ? -90 : (gamma < -45 ? 90 : 90)) : 0;
+    let newAngle = gyroAngleRef.current;
+    
+    if (gamma > 45) newAngle = -90; 
+    else if (gamma < -45) newAngle = 90; 
 
-    if (newAngle !== deviceUiAngle && gameState.current.isSimulatedLandscape) {
-      setDeviceUiAngle(newAngle);
-      setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+    if (newAngle !== gyroAngleRef.current) {
+      gyroAngleRef.current = newAngle;
+      setActiveGyroAngle(newAngle);
+      // 若處於虛擬橫向模式，根據最新方向自動微調
+      if (gameState.current.isSimulatedLandscape) {
+        setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+      }
     }
-  }, [deviceUiAngle]);
+  }, []);
 
+  // 【手動按鈕切換邏輯】
   const toggleOrientation = async () => {
     if (!isSimulatedLandscape) {
+      // 點擊按鈕時才動態請求陀螺儀
       if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
         try {
           const permissionState = await (DeviceOrientationEvent as any).requestPermission();
@@ -140,11 +156,6 @@ export default function EyeComfortApp() {
     const newVal = !isSimulatedLandscape;
     setIsSimulatedLandscape(newVal);
     gameState.current.isSimulatedLandscape = newVal;
-    if (newVal) {
-        setDeviceUiAngle(90); // 預設轉向 90 度
-    } else {
-        setDeviceUiAngle(0);
-    }
     setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
   };
 
@@ -627,7 +638,7 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
-      const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
+      const isEffectiveLandscape = gameState.current.isSimulatedLandscape || window.innerWidth > window.innerHeight;
 
       const targetCamX = isEffectiveLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
@@ -737,11 +748,11 @@ export default function EyeComfortApp() {
         const w = window.innerWidth;
         const h = window.innerHeight;
         const isNative = w > h;
-        const angle = gameState.current.deviceUiAngle;
-        
-        const activeAngle = isNative ? 0 : angle;
-        const renderW = activeAngle !== 0 ? Math.max(w, h) : Math.min(w, h);
-        const renderH = activeAngle !== 0 ? Math.min(w, h) : Math.max(w, h);
+        const sim = gameState.current.isSimulatedLandscape;
+        const angle = isNative ? 0 : (sim ? gyroAngleRef.current : 0);
+
+        const renderW = angle !== 0 ? Math.max(w, h) : Math.min(w, h);
+        const renderH = angle !== 0 ? Math.min(w, h) : Math.max(w, h);
 
         if (camera) {
           camera.aspect = renderW / renderH; 
@@ -892,6 +903,7 @@ export default function EyeComfortApp() {
     return () => clearInterval(timerId);
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
+  // 【訓練啟動器】無需在此額外請求陀螺儀，交給 toggleOrientation 處理
   const startTraining = (type: string) => {
     if (audioRef.current.ctx?.state === 'suspended') { audioRef.current.ctx.resume(); }
 
@@ -934,6 +946,7 @@ export default function EyeComfortApp() {
     }
     gameState.current.module = 'DASHBOARD'; 
     
+    // 返回大廳時清除模擬轉向狀態
     setIsSimulatedLandscape(false);
     gameState.current.isSimulatedLandscape = false;
     setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
@@ -1219,7 +1232,7 @@ export default function EyeComfortApp() {
             )}
 
             {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
-              <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto">
+              <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
                 <video 
                   ref={videoRef} 
                   className="w-full h-full object-cover transition-transform duration-300" 

@@ -53,8 +53,6 @@ export default function EyeComfortApp() {
 
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
   const [isLandscape, setIsLandscape] = useState<boolean>(false);
-  
-  // 【新增】相機畫面獨立旋轉狀態 (解決 iOS 側翻 Bug)
   const [camRotation, setCamRotation] = useState<number>(0);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -72,14 +70,18 @@ export default function EyeComfortApp() {
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
-    isLandscape: false // 同步給底層 3D 引擎使用
+    isLandscape: false
   });
 
+  // 【修正】解決網頁旋轉時漂移與縮放問題
   useEffect(() => {
     const handleOrientationChange = () => {
-      const landscape = window.innerWidth > window.innerHeight;
-      setIsLandscape(landscape);
-      gameState.current.isLandscape = landscape;
+      setTimeout(() => {
+        const landscape = window.innerWidth > window.innerHeight;
+        setIsLandscape(landscape);
+        gameState.current.isLandscape = landscape;
+        window.scrollTo(0, 0); // 強制防止畫面偏移
+      }, 100);
     };
     window.addEventListener('resize', handleOrientationChange);
     handleOrientationChange();
@@ -117,19 +119,17 @@ export default function EyeComfortApp() {
 
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
-          const noseX = lm[1].x; 
-          const leftEyeX = lm[33].x; 
-          const rightEyeX = lm[263].x;
           
-          const leftDist = Math.abs(noseX - leftEyeX); 
-          const rightDist = Math.abs(rightEyeX - noseX);
+          // 【核心修正】升級為絕對距離公式，免疫一切相機側翻或顛倒問題
+          const leftDist = Math.hypot(lm[1].x - lm[33].x, lm[1].y - lm[33].y);
+          const rightDist = Math.hypot(lm[263].x - lm[1].x, lm[263].y - lm[1].y);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
           
-          const eyeNoseY = Math.abs(lm[1].y - lm[168].y); 
-          const noseMouthY = Math.abs(lm[13].y - lm[1].y); 
+          const eyeNoseY = Math.hypot(lm[1].x - lm[168].x, lm[1].y - lm[168].y);
+          const noseMouthY = Math.hypot(lm[13].x - lm[1].x, lm[13].y - lm[1].y);
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
           
-          eyeDistance = Math.abs(leftEyeX - rightEyeX);
+          eyeDistance = Math.hypot(lm[33].x - lm[263].x, lm[33].y - lm[263].y);
         }
 
         const currentMod = gameState.current.module;
@@ -144,8 +144,10 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
+            // 【核心修正】橫向模式時放寬判定閾值，避免頻繁誤判
+            const threshold = gameState.current.isLandscape ? 2.5 : 1.6;
             if (!isSopClosing && !requiresCoveringEye) {
-                if (yawRatio > 1.6 || pitchRatio > 1.6) isLost = true;
+                if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
             }
             if (!isLost && !isSopClosing && eyeDistance > 0.30) {
                 isTooClose = true;
@@ -580,7 +582,7 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
-      // 【核心解法一】3D 鏡頭智慧平移：當手機橫放時，鏡頭往右移 3.5 單位，使 3D 星球完美偏向左側，不再與文字重疊！
+      // 【核心修正】3D 鏡頭智慧平移 (解決文字與星球重疊問題)
       const targetCamX = gameState.current.isLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
       camera.lookAt(camera.position.x, 0, -100);
@@ -667,9 +669,11 @@ export default function EyeComfortApp() {
     renderer.setAnimationLoop(animate);
     
     const handleResize = () => { 
-      camera.aspect = window.innerWidth / window.innerHeight; 
-      camera.updateProjectionMatrix(); 
-      renderer.setSize(window.innerWidth, window.innerHeight); 
+      setTimeout(() => {
+        camera.aspect = window.innerWidth / window.innerHeight; 
+        camera.updateProjectionMatrix(); 
+        renderer.setSize(window.innerWidth, window.innerHeight); 
+      }, 100);
     };
     window.addEventListener('resize', handleResize);
     
@@ -832,6 +836,7 @@ export default function EyeComfortApp() {
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
       gameState.current.aiStatus = 'INIT'; 
       setTrackingState('INITIALIZING');
+      setCamRotation(0); // 啟動訓練時重置相機旋轉狀態
       initEyeTracking(); 
     }
     
@@ -874,7 +879,8 @@ export default function EyeComfortApp() {
   // React JSX 渲染樹
   // ==========================================
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#0f141e] font-sans">
+    // 【核心修正】使用 fixed inset-0 將畫面鎖死，杜絕縮放與位移漂移
+    <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none">
       <div ref={canvasRef} className="absolute inset-0 z-0 pointer-events-none" />
 
       {currentView === 'DASHBOARD' && (
@@ -1095,15 +1101,10 @@ export default function EyeComfortApp() {
       {currentView === 'TRAINING' && (
         <>
           <button onClick={returnToDashboard} className="absolute top-5 left-5 px-6 py-3 bg-[#1a2233] text-[#fffdd0] border border-[#2a3a5a] rounded-lg font-bold text-[18px] cursor-pointer z-20 pointer-events-auto shadow-lg">🔙 返回大廳</button>
-          
-          <div className="absolute top-5 right-5 z-20 flex items-center justify-center gap-2 bg-[#1a2233]/70 border border-[#2a3a5a] px-4 py-2 rounded-full backdrop-blur-md pointer-events-none drop-shadow-lg opacity-80">
-            <span className="text-[18px]">📱</span>
-            <span className="text-[#8b9bb4] text-[14px] font-bold tracking-wide">支援橫豎轉向</span>
-          </div>
 
           {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
             <div className="absolute bottom-5 right-5 w-[100px] h-[130px] bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-auto group">
-              {/* 【解法二】一鍵校正相機側躺問題的動態 Style */}
+              {/* 【核心修正】相機一鍵校正：解決 iOS 原生相機側躺問題 */}
               <video 
                 ref={videoRef} 
                 className="w-full h-full object-cover transition-transform duration-300" 

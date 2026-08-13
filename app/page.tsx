@@ -174,8 +174,8 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            // 【核心修正】將閾值指定為 1.9 測試，適用於所有模式
-            const threshold = 1.9;
+            const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
+            const threshold = 2.1;
             
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
@@ -421,9 +421,10 @@ export default function EyeComfortApp() {
     const todayCycles = parseInt(localStorage.getItem(`rehab_cycles_${todayStr}`) || '0', 10);
     setCalendarData({ todayCycles, monthCycles, days, today: todayDate, year, month });
 
+    // 【核心修正】平緩化 Level 2 與 Level 3 的速度
     let newPrescription = { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 };
-    if (monthCycles >= 3) { newPrescription = { level: 2, stretchSpeed: 1.0, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60 }; }
-    if (monthCycles >= 7) { newPrescription = { level: 3, stretchSpeed: 1.3, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75 }; }
+    if (monthCycles >= 3) { newPrescription = { level: 2, stretchSpeed: 0.8, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60 }; }
+    if (monthCycles >= 7) { newPrescription = { level: 3, stretchSpeed: 1.0, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75 }; }
     gameState.current.prescription = newPrescription;
     setAiPrescriptionLevel(newPrescription.level);
   }, []);
@@ -615,7 +616,6 @@ export default function EyeComfortApp() {
 
       const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
 
-      // 3D 鏡頭智慧平移 (解決文字與星球重疊問題)
       const targetCamX = isEffectiveLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
       camera.lookAt(camera.position.x, 0, -100);
@@ -624,8 +624,12 @@ export default function EyeComfortApp() {
         focusTarget.rotation.x += 0.002; 
         focusTarget.rotation.y += 0.003; 
         focusTarget.position.z = -50;
-        const scale = 1 + Math.cos(timeDelta) * 0.25; 
+        
+        // 【核心修正】模組一橫向大小補償
+        const baseScale = isEffectiveLandscape ? 1.4 : 1.0;
+        const scale = baseScale * (1 + Math.cos(timeDelta) * 0.25); 
         focusTarget.scale.set(scale, scale, scale);
+        
         const targetOpacity = (gameState.current.phase === 'CLOSING') ? 0.05 : 1.0;
         sopMat.opacity += (targetOpacity - sopMat.opacity) * 0.05; 
         coreMat.opacity += (targetOpacity - coreMat.opacity) * 0.05;
@@ -650,7 +654,6 @@ export default function EyeComfortApp() {
         gameState.current.stretchAngle += (0.025 * gameState.current.prescription.stretchSpeed); 
         const speed = gameState.current.stretchAngle; 
         
-        // 永遠鎖定 Z 軸為 -40，絕對不會產生邊緣透視變形
         const currentZ = -40; 
         const distToCamera = camera.position.z - currentZ;
         const vFovRad = (camera.fov * Math.PI) / 180;
@@ -670,9 +673,7 @@ export default function EyeComfortApp() {
         
         const ampY = Math.min(edgeY * 0.6, 12); 
         
-        // 【核心修正】反向透視放大法
-        // 利用 Sin 波段 (-1 to 1) 轉換為極致的實體放大倍率 (0.7x 到 2.2x)
-        // 在最遠處小而深邃，飛到眼前時完美膨脹 3 倍大，且 100% 保持正圓形
+        // 【核心修正】模組二完美反向透視補償
         const depthFactor = Math.sin(speed * 0.5); 
         const scaleVal = 1.45 + depthFactor * 0.75; 
         stretchOrb.scale.setScalar(scaleVal + Math.cos(speed * 3) * 0.1);

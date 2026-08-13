@@ -54,7 +54,6 @@ export default function EyeComfortApp() {
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
   const [manualCamAngle, setManualCamAngle] = useState<number>(0);
 
-  // 儲存真實螢幕尺寸與陀螺儀轉向狀態
   const [dim, setDim] = useState({ w: 0, h: 0 });
   const [deviceUiAngle, setDeviceUiAngle] = useState<number>(0);
 
@@ -76,11 +75,9 @@ export default function EyeComfortApp() {
     deviceUiAngle: 0
   });
 
-  // 尺寸初始化與 Resize 監聽
   useEffect(() => {
     const updateDim = () => {
       setDim({ w: window.innerWidth, h: window.innerHeight });
-      // 防衝突：如果原生已經橫向，取消虛擬轉向
       if (window.innerWidth > window.innerHeight) {
         setDeviceUiAngle(0);
         gameState.current.deviceUiAngle = 0;
@@ -109,7 +106,6 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【全自動陀螺儀偵測】
   const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
     if (window.innerWidth > window.innerHeight) {
       if (gameState.current.deviceUiAngle !== 0) {
@@ -124,7 +120,6 @@ export default function EyeComfortApp() {
     const beta = event.beta;   
     if (gamma === null || gamma === undefined || beta === null) return;
     
-    // 平放時不亂翻轉
     if (Math.abs(beta) < 20 || Math.abs(beta) > 160) return;
 
     let newAngle = gameState.current.deviceUiAngle;
@@ -156,7 +151,6 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks && results.faceLandmarks.length > 0) {
           const lm = results.faceLandmarks[0];
           
-          // 絕對距離防側躺誤判
           const leftDist = Math.hypot(lm[1].x - lm[33].x, lm[1].y - lm[33].y);
           const rightDist = Math.hypot(lm[263].x - lm[1].x, lm[263].y - lm[1].y);
           yawRatio = Math.max(leftDist, rightDist) / (Math.min(leftDist, rightDist) + 0.0001);
@@ -181,7 +175,8 @@ export default function EyeComfortApp() {
             isLost = true;
         } else {
             const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
-            const threshold = isEffectiveLandscape ? 2.5 : 1.6;
+            // 【核心修正 1：追蹤敏感度】黃金平衡點 1.9，不會太容易警示，也不會太遲鈍
+            const threshold = isEffectiveLandscape ? 1.9 : 1.6;
             
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
@@ -621,7 +616,7 @@ export default function EyeComfortApp() {
 
       const isEffectiveLandscape = gameState.current.deviceUiAngle !== 0 || window.innerWidth > window.innerHeight;
 
-      // 3D 鏡頭智慧平移 (解決文字與星球重疊問題)
+      // 3D 鏡頭智慧平移 
       const targetCamX = isEffectiveLandscape ? 3.5 : 0;
       camera.position.x += (targetCamX - camera.position.x) * 0.08;
       camera.lookAt(camera.position.x, 0, -100);
@@ -656,7 +651,9 @@ export default function EyeComfortApp() {
         gameState.current.stretchAngle += (0.025 * gameState.current.prescription.stretchSpeed); 
         const speed = gameState.current.stretchAngle; 
         
-        const currentZ = -40 + Math.sin(speed * 0.5) * 15; 
+        // 【核心修正 2：徹底消滅廣角畸變】
+        // 鎖定 Z 軸不移動，絕對不會產生邊緣透視變形
+        const currentZ = -40; 
         const distToCamera = camera.position.z - currentZ;
         const vFovRad = (camera.fov * Math.PI) / 180;
         const visibleHeight = 2 * Math.tan(vFovRad / 2) * distToCamera;
@@ -666,17 +663,18 @@ export default function EyeComfortApp() {
         const edgeY = visibleHeight / 2;
         
         let centerX = camera.position.x;
-        let ampX = edgeX * 0.8; 
+        let ampX = edgeX * 0.7; 
         
         if (isEffectiveLandscape) {
             centerX = camera.position.x - edgeX * 0.15; 
-            ampX = edgeX * 0.65; 
+            ampX = edgeX * 0.55; // 限縮軌跡範圍在 55%
         }
         
         const ampY = Math.min(edgeY * 0.6, 12); 
         
-        const extraScale = (60 - distToCamera) * 0.02;
-        stretchOrb.scale.setScalar(1 + extraScale + Math.cos(speed * 3) * 0.1);
+        // 【核心修正 2】完全依賴 Scale 模擬飛近，保證球體永遠是正圓形！
+        const depthScale = Math.sin(speed * 0.5) * 0.6; // 產生 0.4x ~ 1.6x 的縮放感
+        stretchOrb.scale.setScalar(1 + depthScale + Math.cos(speed * 3) * 0.1);
         
         stretchOrb.position.set(centerX + Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, currentZ);
       }
@@ -724,7 +722,6 @@ export default function EyeComfortApp() {
         const isNative = w > h;
         const angle = gameState.current.deviceUiAngle;
         
-        // 【核心修正】3D 引擎自動抓取完美解析度，消滅橢圓畸變與雙重擠壓！
         const activeAngle = isNative ? 0 : angle;
         const renderW = activeAngle !== 0 ? h : w;
         const renderH = activeAngle !== 0 ? w : h;
@@ -878,7 +875,6 @@ export default function EyeComfortApp() {
     return () => clearInterval(timerId);
   }, [playDingSound, dipBGM, updateUI, logTraining, currentView]);
 
-  // 【核心新增】進入訓練時主動請求 iOS 陀螺儀權限，並綁定自動翻轉
   const startTrainingWithOrientation = async (type: string) => {
     try {
       if (typeof (DeviceOrientationEvent as any).requestPermission === 'function') {
@@ -958,23 +954,18 @@ export default function EyeComfortApp() {
     if (isIntro) {
       showModuleIntro(type);
     } else {
-      startTrainingWithOrientation(type); // 確保每次直接進入都要求陀螺儀權限
+      startTrainingWithOrientation(type);
     }
   };
 
-  // 【絕對佈局計算】取得當下正確的寬高與旋轉角，防衝突
+  // 【核心絕對佈局運算】：取代會擠壓的 Flexbox
   const isNativeLandscape = dim.w > dim.h;
   const activeAngle = isNativeLandscape ? 0 : deviceUiAngle;
   
-  // 旋轉後的邏輯容器長寬，供內部 Absolute 排版使用
   const containerW = activeAngle !== 0 ? dim.h : dim.w;
   const containerH = activeAngle !== 0 ? dim.w : dim.h;
-
-  // 統合橫式判定，提供給 3D 引擎運鏡與文字排版
   const isEffectiveLandscape = isNativeLandscape || activeAngle !== 0;
 
-  // 【核心相機反向校正】相機影像因為 CSS 容器轉了 90 度，所以影片必須反向轉 -90 度抵銷
-  // 但我們仍然提供手動按鈕讓使用者隨時轉向 (manualCamAngle)
   const autoCamCompensation = activeAngle === 90 ? -90 : activeAngle === -90 ? 90 : 0;
   const finalCamRotation = (manualCamAngle + autoCamCompensation) % 360;
 
@@ -982,7 +973,7 @@ export default function EyeComfortApp() {
   // React JSX 渲染樹
   // ==========================================
   return (
-    // 【終極滿版鎖死】移除 Flexbox！外層純鎖死，內層用 absolute 負邊距完美置中旋轉！
+    // 外層鎖定不准動，內層純 absolute 定位，免疫 Flexbox 壓縮錯誤！
     <div className="fixed inset-0 overflow-hidden bg-[#0f141e] font-sans touch-none">
       <div 
         className="absolute"

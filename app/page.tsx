@@ -40,6 +40,9 @@ interface DiagnosticData { leftEye: TestResult; rightEye: TestResult; }
 export default function EyeComfortApp() {
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
+  
+  // 【新增狀態】是否完成 LIFF 啟動檢查
+  const [isLiffReady, setIsLiffReady] = useState<boolean>(false);
   const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
   
   const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: React.ReactNode, position: 'BOTTOM' | 'CENTER', showContinue: boolean, showInput: boolean }>({ title: '', timer: '', position: 'BOTTOM', showContinue: false, showInput: false });
@@ -52,8 +55,8 @@ export default function EyeComfortApp() {
   const [redeemCode, setRedeemCode] = useState<string>('');
 
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
+  const [manualCamAngle, setManualCamAngle] = useState<number>(0);
 
-  // 【核心狀態：尺寸與陀螺儀轉向】
   const [dim, setDim] = useState({ w: 0, h: 0 });
   const [isSimulatedLandscape, setIsSimulatedLandscape] = useState<boolean>(false);
   const [activeGyroAngle, setActiveGyroAngle] = useState<number>(90); 
@@ -108,26 +111,22 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【終極修復：解鎖全域 3D 陀螺儀】就算平放桌面或躺在床上也能精準判斷左右轉！
   const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
     const gamma = event.gamma; 
     const beta = event.beta;   
     if (gamma === null || gamma === undefined || beta === null) return;
     
-    // 如果手機 100% 絕對平放（低於 15 度），才忽略以防干擾
     if (Math.abs(beta) < 15 || Math.abs(beta) > 165) return;
 
     let g = gamma;
-    // iOS 陀螺儀防呆校正：當手機螢幕朝下或過度前傾時，gamma 訊號會反轉，必須補償
     if (beta > 90 || beta < -90) {
       g = -g;
     }
 
     let newAngle = gyroAngleRef.current;
     
-    // 降低閾值，只要往左右傾斜超過 35 度，就自動判定翻轉方向
-    if (g > 35) newAngle = -90; // 順時針轉（手機頂部朝右）
-    else if (g < -35) newAngle = 90; // 逆時針轉（手機頂部朝左）
+    if (g > 35) newAngle = -90; 
+    else if (g < -35) newAngle = 90; 
 
     if (newAngle !== gyroAngleRef.current) {
       gyroAngleRef.current = newAngle;
@@ -199,7 +198,6 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            // 【全域敏感度 2.1】
             const threshold = 2.1;
             
             if (!isSopClosing && !requiresCoveringEye) {
@@ -490,9 +488,23 @@ export default function EyeComfortApp() {
     }
   };
 
+  // 【核心更新】加入 Loading 狀態判定與 finally 執行
   useEffect(() => {
-    const initLiff = async () => { try { await liff.init({ liffId: process.env.NEXT_PUBLIC_LIFF_ID || '' }); if (liff.isLoggedIn()) { const profile = await liff.getProfile(); setLineProfile({ uid: profile.userId, name: profile.displayName }); } } catch (err) {} };
-    initLiff(); loadCalendarData();
+    const initLiff = async () => { 
+      try { 
+        await liff.init({ liffId: process.env.NEXT_PUBLIC_LIFF_ID || '' }); 
+        if (liff.isLoggedIn()) { 
+          const profile = await liff.getProfile(); 
+          setLineProfile({ uid: profile.userId, name: profile.displayName }); 
+        } 
+      } catch (err) {
+        console.error('LIFF 初始化失敗', err);
+      } finally {
+        setIsLiffReady(true);
+      }
+    };
+    initLiff(); 
+    loadCalendarData();
   }, [loadCalendarData]);
 
   // ==========================================
@@ -980,7 +992,6 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【動態佈局運算】
   const isNativeLandscape = dim.w > dim.h;
   const appliedAngle = isNativeLandscape ? 0 : (isSimulatedLandscape ? activeGyroAngle : 0);
   
@@ -988,8 +999,6 @@ export default function EyeComfortApp() {
   const containerH = appliedAngle !== 0 ? Math.min(dim.w, dim.h) : dim.h;
   const isEffectiveLandscape = isNativeLandscape || appliedAngle !== 0;
 
-  // 【核心雙層無畸變相機修正】
-  // 外層隨 UI 旋轉，內層鏡頭絕對反向鎖死，保證永遠正向！
   const autoCamCompensation = -appliedAngle; 
   const camWidth = appliedAngle !== 0 ? 130 : 100;
   const camHeight = appliedAngle !== 0 ? 100 : 130;
@@ -1016,9 +1025,15 @@ export default function EyeComfortApp() {
           <div className="absolute inset-0 z-10 flex flex-col items-center justify-start py-10 px-5 overflow-y-auto box-border">
             <h1 className="text-[#fffdd0] text-[32px] text-center mb-[15px] tracking-[1px]"><div className="text-[55px] mb-[10px]">👁️</div>Aura EyeGym</h1>
             <p className="text-[#00ffcc] text-[16px] mt-[-10px] mb-[15px]">數位視覺復健中心</p>
+            
+            {/* 【載入狀態修復】如果還在撈取資料，就顯示載入中動畫 */}
             <p className={`text-[20px] text-center leading-[1.5] mb-[20px] break-keep ${lineProfile.uid !== '未登入' ? 'text-[#00ffcc]' : 'text-[#8b9bb4]'}`}>
-              {lineProfile.uid !== '未登入' ? `歡迎回來，${lineProfile.name}！請選擇您的專屬放鬆模組` : (
-                <>請選擇您的專屬眼部放鬆與訓練模組<br /><button onClick={() => liff.login({ redirectUri: window.location.href })} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)]">🟢 使用 LINE 一鍵登入</button></>
+              {!isLiffReady ? (
+                <span className="text-[#8b9bb4] animate-pulse block my-[10px]">🔄 連線認證中...</span>
+              ) : lineProfile.uid !== '未登入' ? (
+                `歡迎回來，${lineProfile.name}！請選擇您的專屬放鬆模組`
+              ) : (
+                <>請選擇您的專屬眼部放鬆與訓練模組<br /><button onClick={() => liff.login({ redirectUri: window.location.href })} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">🟢 使用 LINE 一鍵登入</button></>
               )}
             </p>
 
@@ -1221,7 +1236,7 @@ export default function EyeComfortApp() {
                 <p className="text-[#8b9bb4] text-[18px] leading-[1.8] m-0" dangerouslySetInnerHTML={{ __html: medicalPrinciples[activeModule].principle }}></p>
               </div>
               <div className="text-center">
-                <button onClick={() => startTrainingWithOrientation(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
+                <button onClick={() => startTraining(activeModule)} className="px-[45px] py-[18px] text-[#0f141e] border-none rounded-full text-[22px] font-bold cursor-pointer" style={{ backgroundColor: medicalPrinciples[activeModule].color, boxShadow: `0 4px 15px ${medicalPrinciples[activeModule].color}60` }}>🚀 開始訓練</button>
               </div>
             </div>
           </div>
@@ -1243,7 +1258,6 @@ export default function EyeComfortApp() {
               </button>
             )}
 
-            {/* 【雙層無畸變相機容器】：徹底解決 CSS Transform 旋轉造成的影像顛倒問題 */}
             {['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(gameState.current.module) && (
               <div 
                 className="absolute bottom-5 right-5 bg-black border-2 border-[#E5B55E] rounded-lg overflow-hidden z-30 shadow-lg pointer-events-none flex items-center justify-center"

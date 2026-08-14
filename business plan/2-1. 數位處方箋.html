@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>數位處方啟動卡 - 設計預覽</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            background-color: #0f141e;
+            color: #fffdd0;
+            font-family: 'Noto Sans TC', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: #00ffcc;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #8b9bb4;
+            font-size: 16px;
+            max-width: 600px;
+            line-height: 1.6;
+        }
+
+        /* 3D 翻轉卡片容器 */
+        .card-container {
+            width: 600px;
+            height: 340px; /* 接近實體卡片的黃金比例 */
+            perspective: 1000px;
+            cursor: pointer;
+        }
+
+        .card {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transition: transform 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            transform-style: preserve-3d;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            border-radius: 20px;
+        }
+
+        .card-container.is-flipped .card {
+            transform: rotateY(180deg);
+        }
+
+        .card-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            border-radius: 20px;
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* 卡片正面設計 */
+        .card-front {
+            background: linear-gradient(135deg, #1a2233 0%, #0f141e 100%);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 40px;
+        }
+
+        /* 裝飾性背景 */
+        .card-front::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(0, 255, 204, 0.05) 0%, transparent 60%);
+            pointer-events: none;
+        }
+
+        .front-left {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            height: 100%;
+            z-index: 1;
+        }
+
+        .clinic-logo {
+            font-size: 16px;
+            color: #8b9bb4;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 25px;
+            letter-spacing: 1px;
+        }
+
+        .clinic-logo span {
+            color: #fff;
+            font-weight: bold;
+        }
+
+        .front-title {
+            font-size: 36px;
+            font-weight: 900;
+            color: #fff;
+            margin: 0 0 10px 0;
+            letter-spacing: 2px;
+        }
+
+        .front-subtitle {
+            font-size: 20px;
+            color: #00ffcc;
+            margin: 0 0 30px 0;
+            font-weight: 700;
+        }
+
+        .front-tag {
+            background-color: rgba(0, 255, 204, 0.1);
+            color: #00ffcc;
+            padding: 8px 16px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: bold;
+            display: inline-block;
+            border: 1px solid rgba(0, 255, 204, 0.3);
+        }
+
+        .front-right {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 1;
+        }
+
+        .qr-placeholder {
+            width: 160px;
+            height: 160px;
+            background-color: #fff;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 10px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+            position: relative;
+        }
+
+        /* 模擬 QR Code 紋理 */
+        .qr-placeholder::after {
+            content: 'SCAN ME';
+            width: 100%;
+            height: 100%;
+            border: 2px dashed #000;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #000;
+            font-weight: 900;
+            font-size: 24px;
+            background: repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(0,0,0,0.05) 10px, rgba(0,0,0,0.05) 20px);
+        }
+
+        .scan-hint {
+            margin-top: 15px;
+            color: #8b9bb4;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        /* 卡片背面設計 */
+        .card-back {
+            background: #ffffff;
+            color: #333;
+            transform: rotateY(180deg);
+            padding: 35px 40px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .back-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 20px;
+        }
+
+        .patient-info p {
+            margin: 0 0 8px 0;
+            font-size: 15px;
+            color: #666;
+        }
+
+        .patient-info span {
+            font-weight: bold;
+            color: #1a2233;
+            font-size: 16px;
+            border-bottom: 1px solid #333;
+            padding-bottom: 2px;
+            margin-left: 10px;
+            display: inline-block;
+            min-width: 120px;
+        }
+
+        .doctor-stamp {
+            border: 3px solid #d9534f;
+            color: #d9534f;
+            border-radius: 5px;
+            padding: 5px 10px;
+            font-weight: 900;
+            font-size: 14px;
+            transform: rotate(-5deg);
+            opacity: 0.8;
+        }
+
+        .back-middle {
+            margin: 20px 0;
+        }
+
+        .instruction-title {
+            font-size: 16px;
+            font-weight: 900;
+            color: #1a2233;
+            margin-bottom: 15px;
+        }
+
+        .instruction-list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            font-size: 14px;
+            color: #555;
+            line-height: 1.8;
+        }
+
+        .instruction-list li {
+            position: relative;
+            padding-left: 25px;
+        }
+
+        .instruction-list li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            color: #00ffcc;
+            font-weight: bold;
+            background: #1a2233;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 10px;
+            top: 4px;
+        }
+
+        .back-bottom {
+            background-color: #f4f9ff;
+            border: 1px solid #b3d4f0;
+            border-radius: 12px;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .code-label {
+            font-size: 14px;
+            font-weight: bold;
+            color: #1a4b82;
+        }
+
+        .scratch-code {
+            background: linear-gradient(135deg, #e0e0e0 0%, #c0c0c0 100%);
+            padding: 10px 20px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 20px;
+            font-weight: 900;
+            color: #333;
+            letter-spacing: 3px;
+            position: relative;
+            cursor: pointer;
+            overflow: hidden;
+        }
+
+        /* 模擬銀漆未刮開的狀態 */
+        .scratch-cover {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: repeating-linear-gradient(
+                45deg,
+                #999,
+                #999 10px,
+                #aaa 10px,
+                #aaa 20px
+            );
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 12px;
+            font-family: sans-serif;
+            transition: opacity 0.3s;
+        }
+
+        .scratch-code.scratched .scratch-cover {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* 提示按鈕 */
+        .flip-hint {
+            margin-top: 30px;
+            padding: 12px 24px;
+            background: transparent;
+            color: #8b9bb4;
+            border: 1px solid #8b9bb4;
+            border-radius: 30px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .flip-hint:hover {
+            background: rgba(139, 155, 180, 0.1);
+            color: #fff;
+        }
+
+        @media (max-width: 650px) {
+            .card-container {
+                width: 100%;
+                max-width: 400px;
+                height: 500px;
+            }
+            .card-front {
+                flex-direction: column;
+                text-align: center;
+            }
+            .clinic-logo { justify-content: center; }
+            .front-title { font-size: 28px; }
+            .back-top { flex-direction: column; gap: 15px; }
+            .back-bottom { flex-direction: column; gap: 10px; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>🏥 實體化展示：數位處方啟動卡</h1>
+        <p>這是一張模擬眼科診所發給病患的實體卡片。您可以點擊卡片進行 3D 翻轉，背面甚至有模擬「刮刮樂」的互動效果。請嘗試點擊看看！</p>
+    </div>
+
+    <!-- 卡片容器 -->
+    <div class="card-container" id="prescriptionCard" onclick="flipCard()">
+        <div class="card">
+            
+            <!-- 卡片正面 -->
+            <div class="card-face card-front">
+                <div class="front-left">
+                    <div class="clinic-logo">
+                        <span>🏥 合作眼科診所</span> × 彥臣生技
+                    </div>
+                    <h2 class="front-title">數位處方籤</h2>
+                    <h3 class="front-subtitle">VIP 視覺復健療程</h3>
+                    <div>
+                        <span class="front-tag">✔ 包含 Z 軸睫狀肌高階重訓</span>
+                    </div>
+                </div>
+                <div class="front-right">
+                    <div class="qr-placeholder"></div>
+                    <div class="scan-hint">
+                        <span>📱</span> 請使用 LINE 掃描啟動
+                    </div>
+                </div>
+            </div>
+
+            <!-- 卡片背面 -->
+            <div class="card-face card-back">
+                <div class="back-top">
+                    <div class="patient-info">
+                        <p>病患姓名：<span>王小明</span></p>
+                        <p>開立日期：<span>2026/08/06</span></p>
+                        <p>處方療程：<span>30天數位護眼計畫</span></p>
+                    </div>
+                    <div class="doctor-stamp">
+                        主治醫師<br>處方簽章
+                    </div>
+                </div>
+
+                <div class="back-middle">
+                    <div class="instruction-title">啟用與復健指南：</div>
+                    <ul class="instruction-list">
+                        <li>使用手機相機或 LINE，掃描正面 QR Code 免費開啟系統。</li>
+                        <li>於大廳點擊「啟動碼兌換」，並刮開下方銀漆。</li>
+                        <li>輸入您的專屬 12 碼授權碼，立即解鎖全套高階復健模組。</li>
+                        <li>請依照醫囑，每日完成一次視覺復健大循環。您的進度將同步回傳至診所後台。</li>
+                    </ul>
+                </div>
+
+                <div class="back-bottom">
+                    <div class="code-label">專屬啟動授權碼：</div>
+                    <!-- 點擊刮開效果 -->
+                    <div class="scratch-code" id="scratchArea" onclick="scratchCode(event)">
+                        EYE-A8F2-99B1
+                        <div class="scratch-cover">點擊刮開銀漆</div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <button class="flip-hint" onclick="flipCard()">🔄 點擊翻轉卡片</button>
+
+    <script>
+        function flipCard() {
+            const card = document.getElementById('prescriptionCard');
+            card.classList.toggle('is-flipped');
+        }
+
+        function scratchCode(event) {
+            // 阻止事件冒泡，以免點擊刮開時觸發卡片翻轉
+            event.stopPropagation();
+            const scratchArea = document.getElementById('scratchArea');
+            scratchArea.classList.add('scratched');
+        }
+    </script>
+
+</body>
+</html>

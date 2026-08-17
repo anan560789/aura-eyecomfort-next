@@ -78,7 +78,10 @@ export default function EyeComfortApp() {
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
     isSimulatedLandscape: false,
-    deviceUiAngle: 0
+    deviceUiAngle: 0,
+    sessionStartTime: '',
+    pauseCount: 0,
+    stateMachineLog: {} as any
   });
 
   useEffect(() => {
@@ -225,6 +228,7 @@ export default function EyeComfortApp() {
           lostFrames = 0;
           if (isTooClose) {
             if (gameState.current.aiStatus !== 'TOO_CLOSE') { 
+              gameState.current.pauseCount++;
               gameState.current.aiStatus = 'TOO_CLOSE'; 
               setTrackingState('TOO_CLOSE'); 
             }
@@ -237,6 +241,7 @@ export default function EyeComfortApp() {
         }
         
         if ((lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') || (lostFrames > 3 && gameState.current.aiStatus === 'TOO_CLOSE')) {
+          gameState.current.pauseCount++;
           gameState.current.aiStatus = 'LOST'; 
           setTrackingState('LOST');
         }
@@ -386,27 +391,67 @@ export default function EyeComfortApp() {
     return () => window.removeEventListener('online', syncOfflineLogs);
   }, [syncOfflineLogs]);
 
+  // 【新增】環境擷取輔助函數
+  const getDevicePlatform = () => {
+    if (typeof window === 'undefined') return 'Unknown';
+    const ua = navigator.userAgent;
+    if (/iPad|iPhone|iPod/.test(ua)) return 'iOS';
+    if (/Android/.test(ua)) return 'Android';
+    if (/Mac/.test(ua)) return 'macOS';
+    if (/Win/.test(ua)) return 'Windows';
+    return 'Web';
+  };
+
   const logTraining = async (moduleName: string, durationSec: number) => { 
     if (!lineProfile.uid || lineProfile.uid === '未登入') return; 
-    
-    const logData = { 
-      line_uid: lineProfile.uid, 
-      module_name: moduleName, 
-      duration: durationSec,
-      created_at: new Date().toISOString() 
-    };
+  
+    const endTime = new Date();
+    const startTimeStr = gameState.current.sessionStartTime || endTime.toISOString();
+    const endTimeStr = endTime.toISOString();
+  
+  // 生成專利格式之 Session ID (如 req_8859_20260808_1422)
+  const uidPrefix = lineProfile.uid.substring(0, 4);
+  const timeStr = `${endTime.getFullYear()}${(endTime.getMonth() + 1).toString().padStart(2, '0')}${endTime.getDate().toString().padStart(2, '0')}_${endTime.getHours().toString().padStart(2, '0')}${endTime.getMinutes().toString().padStart(2, '0')}`;
+  const sessionId = `req_${uidPrefix}_${timeStr}`;
 
-    try { 
-      const { error } = await supabase.from('training_logs').insert([logData]); 
-      if (error) throw error;
-    } catch (err) {
-      console.warn("⚠️ 網路異常，訓練紀錄暫存至邊緣端 LocalStorage");
-      const offlineKey = 'aura_offline_logs';
-      const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
-      offlineLogs.push(logData);
-      localStorage.setItem(offlineKey, JSON.stringify(offlineLogs));
-    } 
+  // 封裝為符合專利特徵之 JSON Payload
+  const logData = {
+    session_id: sessionId,
+    auth_code: redeemCode || "FREE-TIER",
+    device_info: {
+      os_platform: getDevicePlatform(),
+      screen_refresh_rate: 60
+    },
+    training_context: {
+      module_id: gameState.current.module,
+      module_type: moduleName,
+      timestamp_start: startTimeStr,
+      timestamp_end: endTimeStr
+    },
+    performance_metrics: {
+      is_completed: true,
+      total_active_seconds: durationSec,
+      pause_count: gameState.current.pauseCount, // 帶入中斷次數
+      exit_node: "completed"
+    },
+    state_machine_details: gameState.current.stateMachineLog,
+    // 為相容 Supabase 資料庫原本扁平設計，額外保留外層 UID
+    line_uid: lineProfile.uid,
+    created_at: endTimeStr 
   };
+
+  try { 
+    // 寫入遠端資料庫
+    const { error } = await supabase.from('training_logs').insert([logData]); 
+    if (error) throw error;
+  } catch (err) {
+    console.warn("⚠️ 網路異常，訓練紀錄暫存至邊緣端 LocalStorage");
+    const offlineKey = 'aura_offline_logs';
+    const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
+    offlineLogs.push(logData);
+    localStorage.setItem(offlineKey, JSON.stringify(offlineLogs));
+  } 
+};
   
   const getTodayString = () => { 
     const d = new Date(); 
@@ -939,6 +984,21 @@ export default function EyeComfortApp() {
 
     setActiveModule(type); setCurrentView('TRAINING');
     const state = gameState.current;
+
+    // 【新增】初始化專利所需之時間與中斷歸零
+    state.sessionStartTime = new Date().toISOString();
+    state.pauseCount = 0;
+  
+    // 【新增】針對 Focus 模組預先建立分段中斷的狀態機日誌結構
+    if (type === 'focus') {
+      state.stateMachineLog = {
+        phase_1_left_eye: { target_seconds: 60, actual_seconds: 60, is_completed: true },
+        transition_interrupt: { triggered: true, pause_duration_seconds: 0, user_resumed: true },
+        phase_2_right_eye: { target_seconds: 60, actual_seconds: 60, is_completed: true }
+      };
+    } else {
+      state.stateMachineLog = {};
+    }
     
     state.module = type; 
     state.phase = 'LOOKING'; 

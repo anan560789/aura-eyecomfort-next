@@ -37,11 +37,54 @@ const medicalPrinciples: Record<string, any> = {
 type TestResult = 'NORMAL' | 'ABNORMAL' | null;
 interface DiagnosticData { leftEye: TestResult; rightEye: TestResult; }
 
+// ==========================================
+// 🚨 專利防護核心：臉部安全閉環與遲滯區間 Hook
+// ==========================================
+function useSafetyStateMachine(currentFaceState: string) {
+  const [isValidTraining, setIsValidTraining] = useState(false);
+  const hysteresisTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    // 【防線 1】處理相機無權限或異常狀態，立刻強制凍結！
+    if (
+      currentFaceState === 'NO_PERMISSION' ||
+      currentFaceState === 'LOST' ||
+      currentFaceState === 'TOO_CLOSE' ||
+      currentFaceState === 'INITIALIZING' ||
+      currentFaceState === 'IDLE'
+    ) {
+      setIsValidTraining(false);
+      if (hysteresisTimerRef.current) {
+        clearTimeout(hysteresisTimerRef.current);
+        hysteresisTimerRef.current = null;
+      }
+      return;
+    }
+
+    // 【防線 2】當狀態回到 TRACKING 時，不立刻恢復，進入 1.5 秒遲滯區間
+    if (currentFaceState === 'TRACKING') {
+      if (isValidTraining) return;
+
+      if (!hysteresisTimerRef.current) {
+        hysteresisTimerRef.current = setTimeout(() => {
+          setIsValidTraining(true);
+          hysteresisTimerRef.current = null;
+        }, 1500); // 1.5 秒遲滯防閃爍
+      }
+    }
+
+    return () => {
+      if (hysteresisTimerRef.current) clearTimeout(hysteresisTimerRef.current);
+    };
+  }, [currentFaceState, isValidTraining]);
+
+  return { isValidTraining };
+}
+
 export default function EyeComfortApp() {
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
   
-  // 【新增狀態】是否完成 LIFF 啟動檢查 (用來消滅閃爍)
   const [isLiffReady, setIsLiffReady] = useState<boolean>(false);
   const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
   
@@ -50,13 +93,15 @@ export default function EyeComfortApp() {
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION' | 'TOO_CLOSE'>('IDLE');
   
+  // 引入獨立的安全狀態機
+  const { isValidTraining } = useSafetyStateMachine(trackingState);
+
   const [isPremiumUnlocked, setIsPremiumUnlocked] = useState<boolean>(false);
   const [showRedeemModal, setShowRedeemModal] = useState<boolean>(false);
   const [redeemCode, setRedeemCode] = useState<string>('');
 
   const [aiPrescriptionLevel, setAiPrescriptionLevel] = useState<number>(1);
 
-  // 【核心狀態：尺寸與陀螺儀轉向】
   const [dim, setDim] = useState({ w: 0, h: 0 });
   const [isSimulatedLandscape, setIsSimulatedLandscape] = useState<boolean>(false);
   const [activeGyroAngle, setActiveGyroAngle] = useState<number>(90); 
@@ -76,6 +121,7 @@ export default function EyeComfortApp() {
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
+    isValidTraining: false, // 供 Three.js 迴圈判斷的總開關
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
     isSimulatedLandscape: false,
     deviceUiAngle: 0,
@@ -83,6 +129,11 @@ export default function EyeComfortApp() {
     pauseCount: 0,
     stateMachineLog: {} as any
   });
+
+  // 隨時將 isValidTraining 同步到 ref 給 RequestAnimationFrame 讀取
+  useEffect(() => {
+    gameState.current.isValidTraining = isValidTraining;
+  }, [isValidTraining]);
 
   useEffect(() => {
     const updateDim = () => {
@@ -115,26 +166,22 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【終極修復：解鎖全域 3D 陀螺儀】就算平放桌面或躺在床上也能精準判斷左右轉！
   const handleDeviceOrientation = useCallback((event: DeviceOrientationEvent) => {
     const gamma = event.gamma; 
     const beta = event.beta;   
     if (gamma === null || gamma === undefined || beta === null) return;
     
-    // 如果手機 100% 絕對平放（低於 15 度），才忽略以防干擾
     if (Math.abs(beta) < 15 || Math.abs(beta) > 165) return;
 
     let g = gamma;
-    // iOS 陀螺儀防呆校正：當手機螢幕朝下或過度前傾時，gamma 訊號會反轉，必須補償
     if (beta > 90 || beta < -90) {
       g = -g;
     }
 
     let newAngle = gyroAngleRef.current;
     
-    // 降低閾值，只要往左右傾斜超過 35 度，就自動判定翻轉方向
-    if (g > 35) newAngle = -90; // 順時針轉（手機頂部朝右）
-    else if (g < -35) newAngle = 90; // 逆時針轉（手機頂部朝左）
+    if (g > 35) newAngle = -90; 
+    else if (g < -35) newAngle = 90; 
 
     if (newAngle !== gyroAngleRef.current) {
       gyroAngleRef.current = newAngle;
@@ -206,7 +253,6 @@ export default function EyeComfortApp() {
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
-            // 【全域敏感度 2.1】
             const threshold = 2.1;
             
             if (!isSopClosing && !requiresCoveringEye) {
@@ -391,7 +437,6 @@ export default function EyeComfortApp() {
     return () => window.removeEventListener('online', syncOfflineLogs);
   }, [syncOfflineLogs]);
 
-  // 【新增】環境擷取輔助函數
   const getDevicePlatform = () => {
     if (typeof window === 'undefined') return 'Unknown';
     const ua = navigator.userAgent;
@@ -409,49 +454,45 @@ export default function EyeComfortApp() {
     const startTimeStr = gameState.current.sessionStartTime || endTime.toISOString();
     const endTimeStr = endTime.toISOString();
   
-  // 生成專利格式之 Session ID (如 req_8859_20260808_1422)
-  const uidPrefix = lineProfile.uid.substring(0, 4);
-  const timeStr = `${endTime.getFullYear()}${(endTime.getMonth() + 1).toString().padStart(2, '0')}${endTime.getDate().toString().padStart(2, '0')}_${endTime.getHours().toString().padStart(2, '0')}${endTime.getMinutes().toString().padStart(2, '0')}`;
-  const sessionId = `req_${uidPrefix}_${timeStr}`;
+    const uidPrefix = lineProfile.uid.substring(0, 4);
+    const timeStr = `${endTime.getFullYear()}${(endTime.getMonth() + 1).toString().padStart(2, '0')}${endTime.getDate().toString().padStart(2, '0')}_${endTime.getHours().toString().padStart(2, '0')}${endTime.getMinutes().toString().padStart(2, '0')}`;
+    const sessionId = `req_${uidPrefix}_${timeStr}`;
 
-  // 封裝為符合專利特徵之 JSON Payload
-  const logData = {
-    session_id: sessionId,
-    auth_code: redeemCode || "FREE-TIER",
-    device_info: {
-      os_platform: getDevicePlatform(),
-      screen_refresh_rate: 60
-    },
-    training_context: {
-      module_id: gameState.current.module,
-      module_type: moduleName,
-      timestamp_start: startTimeStr,
-      timestamp_end: endTimeStr
-    },
-    performance_metrics: {
-      is_completed: true,
-      total_active_seconds: durationSec,
-      pause_count: gameState.current.pauseCount, // 帶入中斷次數
-      exit_node: "completed"
-    },
-    state_machine_details: gameState.current.stateMachineLog,
-    // 為相容 Supabase 資料庫原本扁平設計，額外保留外層 UID
-    line_uid: lineProfile.uid,
-    created_at: endTimeStr 
+    const logData = {
+      session_id: sessionId,
+      auth_code: redeemCode || "FREE-TIER",
+      device_info: {
+        os_platform: getDevicePlatform(),
+        screen_refresh_rate: 60
+      },
+      training_context: {
+        module_id: gameState.current.module,
+        module_type: moduleName,
+        timestamp_start: startTimeStr,
+        timestamp_end: endTimeStr
+      },
+      performance_metrics: {
+        is_completed: true,
+        total_active_seconds: durationSec,
+        pause_count: gameState.current.pauseCount,
+        exit_node: "completed"
+      },
+      state_machine_details: gameState.current.stateMachineLog,
+      line_uid: lineProfile.uid,
+      created_at: endTimeStr 
+    };
+
+    try { 
+      const { error } = await supabase.from('training_logs').insert([logData]); 
+      if (error) throw error;
+    } catch (err) {
+      console.warn("⚠️ 網路異常，訓練紀錄暫存至邊緣端 LocalStorage");
+      const offlineKey = 'aura_offline_logs';
+      const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
+      offlineLogs.push(logData);
+      localStorage.setItem(offlineKey, JSON.stringify(offlineLogs));
+    } 
   };
-
-  try { 
-    // 寫入遠端資料庫
-    const { error } = await supabase.from('training_logs').insert([logData]); 
-    if (error) throw error;
-  } catch (err) {
-    console.warn("⚠️ 網路異常，訓練紀錄暫存至邊緣端 LocalStorage");
-    const offlineKey = 'aura_offline_logs';
-    const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
-    offlineLogs.push(logData);
-    localStorage.setItem(offlineKey, JSON.stringify(offlineLogs));
-  } 
-};
   
   const getTodayString = () => { 
     const d = new Date(); 
@@ -539,7 +580,6 @@ export default function EyeComfortApp() {
     }
   };
 
-  // 【核心修復：結合 finally 消滅載入閃爍時間差】
   useEffect(() => {
     const initLiff = async () => { 
       try { 
@@ -688,9 +728,9 @@ export default function EyeComfortApp() {
 
       const now = performance.now();
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(mod) || (mod === 'sop' && gameState.current.phase === 'LOOKING');
-      const currentAiStatus = gameState.current.aiStatus;
       
-      if (requiresTracking && (currentAiStatus === 'INIT' || ((currentAiStatus === 'LOST' || currentAiStatus === 'TOO_CLOSE') && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED'))) { 
+      // 🚨 專利防護植入：只有 isValidTraining 允許時才進行 3D 動畫推進
+      if (requiresTracking && !gameState.current.isValidTraining && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED') { 
         lastRenderTime = now;
         renderer.render(scene, camera); return; 
       }
@@ -898,9 +938,9 @@ export default function EyeComfortApp() {
 
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(state.module) || (state.module === 'sop' && state.phase === 'LOOKING');
       
+      // 🚨 專利防護植入：只有 isValidTraining 允許時才進行時間推移！
       if (requiresTracking) {
-        if (state.aiStatus === 'INIT') return;
-        if ((state.aiStatus === 'LOST' || state.aiStatus === 'TOO_CLOSE') && !state.isResting && state.phase !== 'COMPLETED') return;
+        if (!state.isValidTraining && !state.isResting && state.phase !== 'COMPLETED') return;
       }
 
       if (requiresTracking && state.isResting) {
@@ -985,11 +1025,9 @@ export default function EyeComfortApp() {
     setActiveModule(type); setCurrentView('TRAINING');
     const state = gameState.current;
 
-    // 【新增】初始化專利所需之時間與中斷歸零
     state.sessionStartTime = new Date().toISOString();
     state.pauseCount = 0;
   
-    // 【新增】針對 Focus 模組預先建立分段中斷的狀態機日誌結構
     if (type === 'focus') {
       state.stateMachineLog = {
         phase_1_left_eye: { target_seconds: 60, actual_seconds: 60, is_completed: true },
@@ -1092,7 +1130,6 @@ export default function EyeComfortApp() {
             <h1 className="text-[#fffdd0] text-[32px] text-center mb-[15px] tracking-[1px]"><div className="text-[55px] mb-[10px]">👁️</div>Aura EyeGym</h1>
             <p className="text-[#00ffcc] text-[16px] mt-[-10px] mb-[15px]">數位視覺復健中心</p>
             
-            {/* 【載入狀態完美修復】完全消除綠色按鈕的閃爍時間差 */}
             <div className={`text-[20px] text-center leading-[1.5] mb-[20px] break-keep ${lineProfile.uid !== '未登入' ? 'text-[#00ffcc]' : 'text-[#8b9bb4]'}`}>
               {!isLiffReady ? (
                 <span className="text-[#8b9bb4] animate-pulse block my-[10px]">🔄 LINE 認證連線中...</span>
@@ -1349,6 +1386,18 @@ export default function EyeComfortApp() {
               </div>
             )}
 
+            {/* 🚨 防線UI：相機無權限時的強制阻擋 */}
+            {trackingState === 'NO_PERMISSION' && (
+              <div className="absolute inset-0 z-40 bg-black/90 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
+                <div className="text-[60px] mb-4">📷</div>
+                <h2 className="text-[#ff4d4d] text-[28px] font-bold mb-4 tracking-widest">需要相機權限</h2>
+                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
+                  本醫療級訓練需啟用相機以確保您的觀看距離安全。<br/>(您的影像僅於設備端運算，絕不上傳)<br/><br/>
+                  <strong className="text-[#E5B55E]">請允許相機權限後重新整理網頁。</strong>
+                </p>
+              </div>
+            )}
+
             {trackingState === 'INITIALIZING' && (
               <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
                 <div className="text-[60px] mb-4 animate-spin">⏳</div>
@@ -1376,6 +1425,14 @@ export default function EyeComfortApp() {
                 <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
                   訓練與時間已暫停。<br/>請確保<strong className="text-[#E5B55E]">臉部正對螢幕</strong>。
                 </p>
+              </div>
+            )}
+            
+            {/* 🚨 防線UI：1.5秒遲滯區間的過渡畫面 */}
+            {trackingState === 'TRACKING' && !isValidTraining && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
+              <div className="absolute inset-0 z-20 bg-black/60 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-none transition-opacity duration-300">
+                <div className="text-[50px] mb-2 animate-pulse">⏳</div>
+                <h2 className="text-[#00ffcc] text-[22px] font-bold tracking-widest">安全姿態驗證中...</h2>
               </div>
             )}
 

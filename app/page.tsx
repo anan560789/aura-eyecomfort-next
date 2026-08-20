@@ -45,12 +45,13 @@ function useSafetyStateMachine(currentFaceState: string) {
   const hysteresisTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // 【防線 1】處理相機無權限或異常狀態，立刻強制凍結！
+    // 【防線 1】處理相機無權限或異常狀態，包含新增的 CALIBRATING
     if (
       currentFaceState === 'NO_PERMISSION' ||
       currentFaceState === 'LOST' ||
       currentFaceState === 'TOO_CLOSE' ||
       currentFaceState === 'INITIALIZING' ||
+      currentFaceState === 'CALIBRATING' ||
       currentFaceState === 'IDLE'
     ) {
       setIsValidTraining(false);
@@ -61,7 +62,7 @@ function useSafetyStateMachine(currentFaceState: string) {
       return;
     }
 
-    // 【防線 2】當狀態回到 TRACKING 時，不立刻恢復，進入 1.5 秒遲滯區間
+    // 【防線 2】當狀態回到 TRACKING 時，進入 1.5 秒遲滯區間
     if (currentFaceState === 'TRACKING') {
       if (isValidTraining) return;
 
@@ -69,7 +70,7 @@ function useSafetyStateMachine(currentFaceState: string) {
         hysteresisTimerRef.current = setTimeout(() => {
           setIsValidTraining(true);
           hysteresisTimerRef.current = null;
-        }, 1500); // 1.5 秒遲滯防閃爍
+        }, 1500); 
       }
     }
 
@@ -91,10 +92,18 @@ export default function EyeComfortApp() {
   const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: React.ReactNode, position: 'BOTTOM' | 'CENTER', showContinue: boolean, showInput: boolean }>({ title: '', timer: '', position: 'BOTTOM', showContinue: false, showInput: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
-  const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION' | 'TOO_CLOSE'>('IDLE');
   
-  // 引入獨立的安全狀態機
+  // 新增 'CALIBRATING' 狀態
+  const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'CALIBRATING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION' | 'TOO_CLOSE'>('IDLE');
+  
   const { isValidTraining } = useSafetyStateMachine(trackingState);
+
+  // ==========================================
+  // 🚨 專利防護核心：物理觀看距離光學參數
+  // ==========================================
+  const [calibrationTimeLeft, setCalibrationTimeLeft] = useState(3);
+  const referenceEyeWidthRef = useRef<number | null>(null); // W_ref
+  const calibrationDataRef = useRef<number[]>([]); // 收集校正期間的數據以取平均
 
   const [isPremiumUnlocked, setIsPremiumUnlocked] = useState<boolean>(false);
   const [showRedeemModal, setShowRedeemModal] = useState<boolean>(false);
@@ -121,7 +130,7 @@ export default function EyeComfortApp() {
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
-    isValidTraining: false, // 供 Three.js 迴圈判斷的總開關
+    isValidTraining: false, 
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
     isSimulatedLandscape: false,
     deviceUiAngle: 0,
@@ -130,7 +139,6 @@ export default function EyeComfortApp() {
     stateMachineLog: {} as any
   });
 
-  // 隨時將 isValidTraining 同步到 ref 給 RequestAnimationFrame 讀取
   useEffect(() => {
     gameState.current.isValidTraining = isValidTraining;
   }, [isValidTraining]);
@@ -214,6 +222,38 @@ export default function EyeComfortApp() {
     setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
   };
 
+  // ==========================================
+  // 🚨 專利防護核心：3秒校正倒數計時器
+  // ==========================================
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (trackingState === 'CALIBRATING') {
+      setCalibrationTimeLeft(3);
+      calibrationDataRef.current = []; // 清空數據準備收集
+      timer = setInterval(() => {
+        setCalibrationTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            // 倒數結束，計算平均 W_ref
+            if (calibrationDataRef.current.length > 0) {
+              const sum = calibrationDataRef.current.reduce((a, b) => a + b, 0);
+              referenceEyeWidthRef.current = sum / calibrationDataRef.current.length;
+              console.log("📏 校正完成，基準像素距離 (W_ref):", referenceEyeWidthRef.current);
+            } else {
+              referenceEyeWidthRef.current = 0.1; // 防呆預設值
+            }
+            // 校正完成，進入追蹤狀態
+            gameState.current.aiStatus = 'TRACKING';
+            setTrackingState('TRACKING');
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [trackingState]);
+
   const startTrackingLoop = useCallback(() => {
     let lostFrames = 0;
     const track = () => {
@@ -238,6 +278,7 @@ export default function EyeComfortApp() {
           const noseMouthY = Math.hypot(lm[13].x - lm[1].x, lm[13].y - lm[1].y);
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
           
+          // 這是實時的 W_pixel
           eyeDistance = Math.hypot(lm[33].x - lm[263].x, lm[33].y - lm[263].y);
         }
 
@@ -254,12 +295,25 @@ export default function EyeComfortApp() {
             isLost = true;
         } else {
             const threshold = 2.1;
-            
             if (!isSopClosing && !requiresCoveringEye) {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
             }
-            if (!isLost && !isSopClosing && eyeDistance > 0.30) {
-                isTooClose = true;
+            
+            // ==========================================
+            // 🚨 專利防護核心：光學反比距離公式
+            // ==========================================
+            if (!isLost && !isSopClosing) {
+                if (gameState.current.aiStatus === 'CALIBRATING') {
+                    // 收集校正期間的 W_pixel
+                    calibrationDataRef.current.push(eyeDistance);
+                } else if (referenceEyeWidthRef.current !== null) {
+                    // 專利公式: D = 40cm * (W_ref / W_pixel)
+                    const estimatedDistance = 40 * (referenceEyeWidthRef.current / eyeDistance);
+                    // 專利請求項限制：小於 30 公分
+                    if (estimatedDistance < 30) {
+                        isTooClose = true;
+                    }
+                }
             }
         }
 
@@ -270,6 +324,11 @@ export default function EyeComfortApp() {
 
         if (isLost) {
           lostFrames++;
+          if ((lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') || (lostFrames > 3 && gameState.current.aiStatus === 'TOO_CLOSE')) {
+            gameState.current.pauseCount++;
+            gameState.current.aiStatus = 'LOST'; 
+            setTrackingState('LOST');
+          }
         } else {
           lostFrames = 0;
           if (isTooClose) {
@@ -279,17 +338,17 @@ export default function EyeComfortApp() {
               setTrackingState('TOO_CLOSE'); 
             }
           } else {
-            if (gameState.current.aiStatus !== 'TRACKING') { 
-              gameState.current.aiStatus = 'TRACKING'; 
-              setTrackingState('TRACKING'); 
+            // 如果沒太近、也沒失去追蹤，判斷是該進入校正還是追蹤
+            if (gameState.current.aiStatus !== 'TRACKING' && gameState.current.aiStatus !== 'CALIBRATING') { 
+              if (referenceEyeWidthRef.current === null) {
+                gameState.current.aiStatus = 'CALIBRATING';
+                setTrackingState('CALIBRATING');
+              } else {
+                gameState.current.aiStatus = 'TRACKING'; 
+                setTrackingState('TRACKING'); 
+              }
             }
           }
-        }
-        
-        if ((lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') || (lostFrames > 3 && gameState.current.aiStatus === 'TOO_CLOSE')) {
-          gameState.current.pauseCount++;
-          gameState.current.aiStatus = 'LOST'; 
-          setTrackingState('LOST');
         }
       }
       trackingLoopRef.current = setTimeout(() => { requestAnimationFrame(track); }, 200);
@@ -729,7 +788,6 @@ export default function EyeComfortApp() {
       const now = performance.now();
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(mod) || (mod === 'sop' && gameState.current.phase === 'LOOKING');
       
-      // 🚨 專利防護植入：只有 isValidTraining 允許時才進行 3D 動畫推進
       if (requiresTracking && !gameState.current.isValidTraining && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED') { 
         lastRenderTime = now;
         renderer.render(scene, camera); return; 
@@ -883,7 +941,7 @@ export default function EyeComfortApp() {
     
     const completionReminder = (
       <div className="text-[17px] text-[#E5B55E] mt-4 leading-[1.6] px-4">
-        💡 溫馨提醒：訓練時為達最佳視覺張力可靠近至 20 公分，<br/>但日常滑手機請務必保持 <span className="text-[#00ffcc] font-bold">30~40 公分</span> 距離喔！
+        💡 溫馨提醒：訓練時為達最佳視覺張力可靠近至 30 公分，<br/>但日常滑手機請務必保持 <span className="text-[#00ffcc] font-bold">30~40 公分</span> 距離喔！
       </div>
     );
 
@@ -938,7 +996,6 @@ export default function EyeComfortApp() {
 
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(state.module) || (state.module === 'sop' && state.phase === 'LOOKING');
       
-      // 🚨 專利防護植入：只有 isValidTraining 允許時才進行時間推移！
       if (requiresTracking) {
         if (!state.isValidTraining && !state.isResting && state.phase !== 'COMPLETED') return;
       }
@@ -1027,6 +1084,7 @@ export default function EyeComfortApp() {
 
     state.sessionStartTime = new Date().toISOString();
     state.pauseCount = 0;
+    referenceEyeWidthRef.current = null; // 🚨 強制每次進入訓練都重新校正
   
     if (type === 'focus') {
       state.stateMachineLog = {
@@ -1072,6 +1130,7 @@ export default function EyeComfortApp() {
       stopEyeTracking(); 
     }
     gameState.current.module = 'DASHBOARD'; 
+    referenceEyeWidthRef.current = null; // 離開時清空校正
     
     setIsSimulatedLandscape(false);
     gameState.current.isSimulatedLandscape = false;
@@ -1398,6 +1457,18 @@ export default function EyeComfortApp() {
               </div>
             )}
 
+            {/* 🚨 專利 UI：3秒校正倒數畫面 */}
+            {trackingState === 'CALIBRATING' && (
+              <div className="absolute inset-0 z-40 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto transition-opacity duration-300">
+                <div className="text-[60px] mb-4">📏</div>
+                <h2 className="text-[#00ffcc] text-[28px] font-bold mb-4 tracking-widest">距離校正中</h2>
+                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8] mb-6">
+                  請將手機拿至<strong className="text-[#E5B55E]">一臂之遙 (約 40 公分)</strong><br/>並正視螢幕，維持不動。
+                </p>
+                <div className="text-[#00ffcc] text-[60px] font-bold">{calibrationTimeLeft}</div>
+              </div>
+            )}
+
             {trackingState === 'INITIALIZING' && (
               <div className="absolute inset-0 z-40 bg-[#0f141e]/90 flex flex-col items-center justify-center backdrop-blur-sm pointer-events-auto">
                 <div className="text-[60px] mb-4 animate-spin">⏳</div>
@@ -1408,12 +1479,13 @@ export default function EyeComfortApp() {
               </div>
             )}
 
+            {/* 🚨 修改過的安全距離提醒文案（對應專利 30 公分） */}
             {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
               <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
                 <div className="text-[60px] mb-4">🛑</div>
                 <h2 className="text-[#E5B55E] text-[28px] font-bold mb-4 tracking-widest">距離螢幕太近</h2>
                 <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8]">
-                  訓練與時間已自動暫停。<br/>請退後至 <strong className="text-[#00ffcc]">20 公分安全距離</strong> 外。
+                  訓練與時間已自動暫停。<br/>請退後至 <strong className="text-[#00ffcc]">30 公分安全距離</strong> 外。
                 </p>
               </div>
             )}

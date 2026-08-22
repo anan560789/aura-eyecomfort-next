@@ -45,7 +45,7 @@ function useSafetyStateMachine(currentFaceState: string) {
   const hysteresisTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // 【防線 1】處理相機無權限或異常狀態，包含新增的 CALIBRATING
+    // 【防線 1】處理相機無權限或異常狀態，包含 CALIBRATING
     if (
       currentFaceState === 'NO_PERMISSION' ||
       currentFaceState === 'LOST' ||
@@ -93,15 +93,16 @@ export default function EyeComfortApp() {
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
   const [testResults, setTestResults] = useState<DiagnosticData>({ leftEye: null, rightEye: null });
   
-  // 新增 'CALIBRATING' 狀態
   const [trackingState, setTrackingState] = useState<'IDLE' | 'INITIALIZING' | 'CALIBRATING' | 'TRACKING' | 'LOST' | 'NO_PERMISSION' | 'TOO_CLOSE'>('IDLE');
   
   const { isValidTraining } = useSafetyStateMachine(trackingState);
 
   // ==========================================
-  // 🚨 專利防護核心：物理觀看距離光學參數
+  // 🚨 專利防護核心：動態光學甜蜜區校正參數
   // ==========================================
   const [calibrationTimeLeft, setCalibrationTimeLeft] = useState(3);
+  const [calibrationStatus, setCalibrationStatus] = useState<'INIT' | 'TOO_CLOSE' | 'TOO_FAR' | 'PERFECT'>('INIT');
+  
   const referenceEyeWidthRef = useRef<number | null>(null); // W_ref
   const calibrationDataRef = useRef<number[]>([]); // 收集校正期間的數據以取平均
 
@@ -131,6 +132,7 @@ export default function EyeComfortApp() {
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
     isValidTraining: false, 
+    calibrationStatus: 'INIT', // 給 MediaPipe 迴圈更新用
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
     isSimulatedLandscape: false,
     deviceUiAngle: 0,
@@ -223,32 +225,36 @@ export default function EyeComfortApp() {
   };
 
   // ==========================================
-  // 🚨 專利防護核心：3秒校正倒數計時器
+  // 🚨 專利防護核心：動態光學引導倒數計時器
   // ==========================================
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (trackingState === 'CALIBRATING') {
       setCalibrationTimeLeft(3);
-      calibrationDataRef.current = []; // 清空數據準備收集
+      calibrationDataRef.current = [];
       timer = setInterval(() => {
-        setCalibrationTimeLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timer);
-            // 倒數結束，計算平均 W_ref
-            if (calibrationDataRef.current.length > 0) {
-              const sum = calibrationDataRef.current.reduce((a, b) => a + b, 0);
-              referenceEyeWidthRef.current = sum / calibrationDataRef.current.length;
-              console.log("📏 校正完成，基準像素距離 (W_ref):", referenceEyeWidthRef.current);
-            } else {
-              referenceEyeWidthRef.current = 0.1; // 防呆預設值
+        // 只有在完美區間 (30~40cm) 才允許倒數
+        if (gameState.current.calibrationStatus === 'PERFECT') {
+          setCalibrationTimeLeft((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              if (calibrationDataRef.current.length > 0) {
+                const sum = calibrationDataRef.current.reduce((a, b) => a + b, 0);
+                referenceEyeWidthRef.current = sum / calibrationDataRef.current.length;
+              } else {
+                referenceEyeWidthRef.current = 0.18; // 防呆
+              }
+              gameState.current.aiStatus = 'TRACKING';
+              setTrackingState('TRACKING');
+              return 0;
             }
-            // 校正完成，進入追蹤狀態
-            gameState.current.aiStatus = 'TRACKING';
-            setTrackingState('TRACKING');
-            return 0;
-          }
-          return prev - 1;
-        });
+            return prev - 1;
+          });
+        } else {
+          // 不在黃金區間，重置倒數與資料
+          setCalibrationTimeLeft(3);
+          calibrationDataRef.current = [];
+        }
       }, 1000);
     }
     return () => clearInterval(timer);
@@ -278,7 +284,6 @@ export default function EyeComfortApp() {
           const noseMouthY = Math.hypot(lm[13].x - lm[1].x, lm[13].y - lm[1].y);
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
           
-          // 這是實時的 W_pixel
           eyeDistance = Math.hypot(lm[33].x - lm[263].x, lm[33].y - lm[263].y);
         }
 
@@ -300,16 +305,35 @@ export default function EyeComfortApp() {
             }
             
             // ==========================================
-            // 🚨 專利防護核心：光學反比距離公式
+            // 🚨 專利防護核心：動態光學甜蜜區與反比公式
             // ==========================================
             if (!isLost && !isSopClosing) {
                 if (gameState.current.aiStatus === 'CALIBRATING') {
-                    // 收集校正期間的 W_pixel
-                    calibrationDataRef.current.push(eyeDistance);
+                    // 一般手機前鏡頭：30cm 大約 eyeDistance=0.23，40cm 大約 eyeDistance=0.15
+                    if (eyeDistance > 0.24) { 
+                        // 太近 (小於約 28cm)
+                        if (gameState.current.calibrationStatus !== 'TOO_CLOSE') {
+                            gameState.current.calibrationStatus = 'TOO_CLOSE';
+                            setCalibrationStatus('TOO_CLOSE');
+                        }
+                    } else if (eyeDistance < 0.13) { 
+                        // 太遠 (大於約 45cm)
+                        if (gameState.current.calibrationStatus !== 'TOO_FAR') {
+                            gameState.current.calibrationStatus = 'TOO_FAR';
+                            setCalibrationStatus('TOO_FAR');
+                        }
+                    } else {
+                        // 落在 30~40cm 的黃金區間
+                        if (gameState.current.calibrationStatus !== 'PERFECT') {
+                            gameState.current.calibrationStatus = 'PERFECT';
+                            setCalibrationStatus('PERFECT');
+                        }
+                        calibrationDataRef.current.push(eyeDistance);
+                    }
                 } else if (referenceEyeWidthRef.current !== null) {
-                    // 專利公式: D = 40cm * (W_ref / W_pixel)
-                    const estimatedDistance = 40 * (referenceEyeWidthRef.current / eyeDistance);
-                    // 專利請求項限制：小於 30 公分
+                    // 校正完成，套用專利公式 D = 35cm * (W_ref / W_pixel)
+                    const estimatedDistance = 35 * (referenceEyeWidthRef.current / eyeDistance);
+                    // 專利請求項限制：小於 30 公分觸發中斷
                     if (estimatedDistance < 30) {
                         isTooClose = true;
                     }
@@ -338,7 +362,6 @@ export default function EyeComfortApp() {
               setTrackingState('TOO_CLOSE'); 
             }
           } else {
-            // 如果沒太近、也沒失去追蹤，判斷是該進入校正還是追蹤
             if (gameState.current.aiStatus !== 'TRACKING' && gameState.current.aiStatus !== 'CALIBRATING') { 
               if (referenceEyeWidthRef.current === null) {
                 gameState.current.aiStatus = 'CALIBRATING';
@@ -1085,6 +1108,8 @@ export default function EyeComfortApp() {
     state.sessionStartTime = new Date().toISOString();
     state.pauseCount = 0;
     referenceEyeWidthRef.current = null; // 🚨 強制每次進入訓練都重新校正
+    setCalibrationStatus('INIT');
+    gameState.current.calibrationStatus = 'INIT';
   
     if (type === 'focus') {
       state.stateMachineLog = {
@@ -1131,6 +1156,8 @@ export default function EyeComfortApp() {
     }
     gameState.current.module = 'DASHBOARD'; 
     referenceEyeWidthRef.current = null; // 離開時清空校正
+    setCalibrationStatus('INIT');
+    gameState.current.calibrationStatus = 'INIT';
     
     setIsSimulatedLandscape(false);
     gameState.current.isSimulatedLandscape = false;
@@ -1217,7 +1244,7 @@ export default function EyeComfortApp() {
 
               {!isPremiumUnlocked && (
                 <div className="w-full bg-[#2a1f1a] border-2 border-[#ff4d4d] rounded-xl p-5 mb-5 shadow-[0_0_15px_rgba(255,77,77,0.2)] flex flex-col items-center">
-                  <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-2">🔒 啟動完整醫療級復健療程</h3>
+                  <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-2">🔒 啟怒完整醫療級復健療程</h3>
                   <p className="text-[#d1b0b0] text-[15px] text-center mb-4">請輸入診所開立之 30 天數位護眼計畫授權碼，解鎖全套模組。</p>
                   <button onClick={() => setShowRedeemModal(true)} className="px-6 py-3 bg-[#ff4d4d] text-white font-bold rounded-full w-full max-w-[300px]">🎟️ 輸入處方授權碼</button>
                 </div>
@@ -1457,15 +1484,23 @@ export default function EyeComfortApp() {
               </div>
             )}
 
-            {/* 🚨 專利 UI：3秒校正倒數畫面 */}
+            {/* 🚨 專利 UI：動態甜蜜區校正倒數畫面 */}
             {trackingState === 'CALIBRATING' && (
               <div className="absolute inset-0 z-40 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto transition-opacity duration-300">
                 <div className="text-[60px] mb-4">📏</div>
                 <h2 className="text-[#00ffcc] text-[28px] font-bold mb-4 tracking-widest">距離校正中</h2>
-                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8] mb-6">
-                  請將手機拿至<strong className="text-[#E5B55E]">一臂之遙 (約 40 公分)</strong><br/>並正視螢幕，維持不動。
+                
+                {/* 動態指示 UI */}
+                {calibrationStatus === 'TOO_CLOSE' && <p className="text-[#ff4d4d] text-[20px] font-bold bg-[#2b1616] px-4 py-2 rounded-lg border border-[#ff4d4d]">太近了，請稍微退後 🛑</p>}
+                {calibrationStatus === 'TOO_FAR' && <p className="text-[#E5B55E] text-[20px] font-bold bg-[#2a1f1a] px-4 py-2 rounded-lg border border-[#E5B55E]">太遠了，請稍微靠近 🔍</p>}
+                {calibrationStatus === 'PERFECT' && <p className="text-[#00ffcc] text-[20px] font-bold bg-[#162b2b] px-4 py-2 rounded-lg border border-[#00ffcc]">距離完美！請保持不動 ✨</p>}
+
+                <p className="text-[#fffdd0] text-[18px] text-center px-6 leading-[1.8] mt-6 mb-6">
+                  請將手機保持在<strong className="text-[#E5B55E]"> 30~40 公分 </strong>的最佳觀看距離。
                 </p>
-                <div className="text-[#00ffcc] text-[60px] font-bold">{calibrationTimeLeft}</div>
+                <div className="text-[#00ffcc] text-[60px] font-bold">
+                  {calibrationStatus === 'PERFECT' ? calibrationTimeLeft : '...'}
+                </div>
               </div>
             )}
 
@@ -1479,7 +1514,6 @@ export default function EyeComfortApp() {
               </div>
             )}
 
-            {/* 🚨 修改過的安全距離提醒文案（對應專利 30 公分） */}
             {trackingState === 'TOO_CLOSE' && !gameState.current.isResting && gameState.current.phase !== 'COMPLETED' && (
               <div className="absolute inset-0 z-20 bg-black/80 flex flex-col items-center justify-center backdrop-blur-md pointer-events-auto">
                 <div className="text-[60px] mb-4">🛑</div>

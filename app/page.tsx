@@ -222,16 +222,12 @@ export default function EyeComfortApp() {
     setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
   };
 
-  // ==========================================
-  // 🚨 專利防護核心：動態光學引導倒數計時器
-  // ==========================================
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (trackingState === 'CALIBRATING') {
       setCalibrationTimeLeft(3);
       calibrationDataRef.current = [];
       timer = setInterval(() => {
-        // 只有在完美區間 (25~40cm) 才允許倒數
         if (gameState.current.calibrationStatus === 'PERFECT') {
           setCalibrationTimeLeft((prev) => {
             if (prev <= 1) {
@@ -301,13 +297,8 @@ export default function EyeComfortApp() {
                 if (yawRatio > threshold || pitchRatio > threshold) isLost = true;
             }
             
-            // ==========================================
-            // 🚨 專利防護核心：動態光學甜蜜區與反比公式
-            // ==========================================
             if (!isLost && !isSopClosing) {
                 if (gameState.current.aiStatus === 'CALIBRATING') {
-                    // 校正區間放寬至 25~40cm
-                    // 25cm 大約 eyeDistance=0.28，40cm 大約 eyeDistance=0.14
                     if (eyeDistance > 0.28) { 
                         if (gameState.current.calibrationStatus !== 'TOO_CLOSE') {
                             gameState.current.calibrationStatus = 'TOO_CLOSE';
@@ -326,9 +317,7 @@ export default function EyeComfortApp() {
                         calibrationDataRef.current.push(eyeDistance);
                     }
                 } else if (referenceEyeWidthRef.current !== null) {
-                    // 我們將校正時的舒適基準視為名目上的 30cm
                     const estimatedDistance = 30 * (referenceEyeWidthRef.current / eyeDistance);
-                    // 專利請求項限制：小於 25 公分觸發中斷
                     if (estimatedDistance < 25) {
                         isTooClose = true;
                     }
@@ -866,14 +855,16 @@ export default function EyeComfortApp() {
         const edgeY = visibleHeight / 2;
         
         let centerX = camera.position.x;
-        let ampX = edgeX * 0.7; 
+        // 🚨 直立時：允許超出螢幕 30% (強迫眼球極限拉伸)
+        let ampX = edgeX * 1.30; 
         
         if (isEffectiveLandscape) {
-            centerX = camera.position.x - edgeX * 0.15; 
-            ampX = edgeX * 0.55; 
+            // 橫向時：螢幕較寬，拉大移動距離至邊緣 85% 以匹配極限拉伸感
+            centerX = camera.position.x - edgeX * 0.05; 
+            ampX = edgeX * 0.85; 
         }
         
-        const ampY = Math.min(edgeY * 0.6, 12); 
+        const ampY = Math.min(edgeY * 0.7, 14); 
         
         const depthFactor = Math.sin(speed * 0.5); 
         const scaleVal = 1.45 + depthFactor * 0.75; 

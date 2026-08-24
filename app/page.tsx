@@ -855,11 +855,10 @@ export default function EyeComfortApp() {
         const edgeY = visibleHeight / 2;
         
         let centerX = camera.position.x;
-        // 🚨 直立時：允許超出螢幕 30% (強迫眼球極限拉伸)
-        let ampX = edgeX * 1.30; 
+        // 🚨 修復：將 1.30 下修為 1.05，讓球體一半切出邊緣即可，保留光暈讓餘光追蹤，避免完全消失
+        let ampX = edgeX * 1.05; 
         
         if (isEffectiveLandscape) {
-            // 橫向時：螢幕較寬，拉大移動距離至邊緣 85% 以匹配極限拉伸感
             centerX = camera.position.x - edgeX * 0.05; 
             ampX = edgeX * 0.85; 
         }

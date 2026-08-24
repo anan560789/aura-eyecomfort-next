@@ -136,6 +136,8 @@ export default function EyeComfortApp() {
     deviceUiAngle: 0,
     sessionStartTime: '',
     pauseCount: 0,
+    blinkCount: 0, // 👁️ 新增：眨眼次數統計
+    isBlinking: false, // 👁️ 新增：防重複計算眨眼狀態
     stateMachineLog: {} as any
   });
 
@@ -278,6 +280,35 @@ export default function EyeComfortApp() {
           pitchRatio = Math.max(eyeNoseY, noseMouthY) / (Math.min(eyeNoseY, noseMouthY) + 0.0001);
           
           eyeDistance = Math.hypot(lm[33].x - lm[263].x, lm[33].y - lm[263].y);
+
+          // ==========================================
+          // 👁️ 專利升級：EAR (Eye Aspect Ratio) 眨眼客觀量測
+          // ==========================================
+          if (gameState.current.aiStatus === 'TRACKING') {
+            // 左眼高度與寬度計算
+            const v1L = Math.hypot(lm[160].x - lm[144].x, lm[160].y - lm[144].y);
+            const v2L = Math.hypot(lm[158].x - lm[153].x, lm[158].y - lm[153].y);
+            const hL = Math.hypot(lm[33].x - lm[133].x, lm[33].y - lm[133].y);
+            const earL = (v1L + v2L) / (2.0 * hL);
+
+            // 右眼高度與寬度計算
+            const v1R = Math.hypot(lm[385].x - lm[380].x, lm[385].y - lm[380].y);
+            const v2R = Math.hypot(lm[387].x - lm[373].x, lm[387].y - lm[373].y);
+            const hR = Math.hypot(lm[362].x - lm[263].x, lm[362].y - lm[263].y);
+            const earR = (v1R + v2R) / (2.0 * hR);
+
+            const avgEAR = (earL + earR) / 2.0;
+
+            // EAR 小於 0.22 通常判定為眼瞼閉合（眨眼）
+            if (avgEAR < 0.22) {
+                if (!gameState.current.isBlinking) {
+                    gameState.current.blinkCount++;
+                    gameState.current.isBlinking = true;
+                }
+            } else {
+                gameState.current.isBlinking = false;
+            }
+          }
         }
 
         const currentMod = gameState.current.module;
@@ -524,6 +555,10 @@ export default function EyeComfortApp() {
     const timeStr = `${endTime.getFullYear()}${(endTime.getMonth() + 1).toString().padStart(2, '0')}${endTime.getDate().toString().padStart(2, '0')}_${endTime.getHours().toString().padStart(2, '0')}${endTime.getMinutes().toString().padStart(2, '0')}`;
     const sessionId = `req_${uidPrefix}_${timeStr}`;
 
+    // 👁️ 專利升級：計算客觀放鬆指標
+    const blinkRate = (gameState.current.blinkCount / (durationSec || 1)) * 60;
+    const isRelaxed = blinkRate >= 12; // 臨床標準：大於 12 次/分 代表無過度凝視
+
     const logData = {
       session_id: sessionId,
       auth_code: redeemCode || "FREE-TIER",
@@ -542,6 +577,11 @@ export default function EyeComfortApp() {
         total_active_seconds: durationSec,
         pause_count: gameState.current.pauseCount,
         exit_node: "completed"
+      },
+      objective_metrics: {
+        blink_count: gameState.current.blinkCount,
+        blink_rate_per_min: parseFloat(blinkRate.toFixed(1)),
+        relaxation_achieved: isRelaxed
       },
       state_machine_details: gameState.current.stateMachineLog,
       line_uid: lineProfile.uid,
@@ -855,7 +895,6 @@ export default function EyeComfortApp() {
         const edgeY = visibleHeight / 2;
         
         let centerX = camera.position.x;
-        // 🚨 修復：將 1.30 下修為 1.05，讓球體一半切出邊緣即可，保留光暈讓餘光追蹤，避免完全消失
         let ampX = edgeX * 1.05; 
         
         if (isEffectiveLandscape) {
@@ -953,29 +992,36 @@ export default function EyeComfortApp() {
       </div>
     );
 
+    // 👁️ 專利升級：常駐的眨眼提醒 UI
+    const blinkReminder = (
+      <div className="text-[15px] text-[#00ffcc] mt-3 animate-pulse font-normal tracking-wider">
+        👁️ 使用過程中請保持正常眨眼
+      </div>
+    );
+
     if (state.module === 'sop') {
       if (state.phase === 'COMPLETED') setUiState({ position: 'CENTER', title: "🎉 3 回合深層放鬆完成！", timer: completionReminder, showContinue: false, showInput: false });
-      else if (state.phase === 'LOOKING') setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">{`(第 ${state.cycle}/${maxCycles} 回合)`}<br/>請柔和注視中心橘點</div>, timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false, showInput: false });
+      else if (state.phase === 'LOOKING') setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">{`(第 ${state.cycle}/${maxCycles} 回合)`}<br/>請柔和注視中心橘點{blinkReminder}</div>, timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false, showInput: false });
       else if (state.phase === 'CLOSING') setUiState({ position: 'BOTTOM', title: "請用力閉上雙眼，徹底放鬆", timer: `剩餘 ${state.sopTimeLeft} 秒`, showContinue: false, showInput: false });
     } else if (state.module === 'stretch') {
-      if (state.stretchTimeLeft > 0) setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">保持頭部靜止<br/>跟隨光球移動伸展眼肌</div>, timer: `剩餘 ${state.stretchTimeLeft} 秒`, showContinue: false, showInput: false });
+      if (state.stretchTimeLeft > 0) setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">保持頭部靜止<br/>跟隨光球移動伸展眼肌{blinkReminder}</div>, timer: `剩餘 ${state.stretchTimeLeft} 秒`, showContinue: false, showInput: false });
       else if (state.isResting) setUiState({ position: 'CENTER', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
       else setUiState({ position: 'CENTER', title: "🎉 眼肌與焦距重訓完成！", timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'chaser') {
-      if (state.chaserTimeLeft > 0) setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">【睫狀肌深空追光】<br/>死盯流星飛向最深處直到消失<br/>(已追蹤: {state.chaserScore} 顆)</div>, timer: `遊戲剩餘：${state.chaserTimeLeft} 秒`, showContinue: false, showInput: false });
+      if (state.chaserTimeLeft > 0) setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">【睫狀肌深空追光】<br/>死盯流星飛向最深處直到消失<br/>(已追蹤: {state.chaserScore} 顆){blinkReminder}</div>, timer: `遊戲剩餘：${state.chaserTimeLeft} 秒`, showContinue: false, showInput: false });
       else if (state.isResting) setUiState({ position: 'CENTER', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
       else setUiState({ position: 'CENTER', title: <div className="text-center w-full">🎮 遊戲結束！<br/>您成功追蹤了 {state.chaserScore} 顆深空流星</div>, timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'breathe') {
       if (state.breatheTimeLeft > 0) {
         const action = state.breathPhase === 'INHALE' ? "跟隨星雲【緩慢吸氣】" : "跟隨星雲【徹底吐氣】";
-        setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">{action}<br/>(請不要對焦任何星星，放寬視野)</div>, timer: `深度放鬆中：${state.breatheTimeLeft} 秒`, showContinue: false, showInput: false });
+        setUiState({ position: 'BOTTOM', title: <div className="text-center w-full">{action}<br/>(請不要對焦任何星星，放寬視野){blinkReminder}</div>, timer: `深度放鬆中：${state.breatheTimeLeft} 秒`, showContinue: false, showInput: false });
       } else if (state.isResting) setUiState({ position: 'CENTER', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
       else setUiState({ position: 'CENTER', title: "🌌 視覺神經與自律神經已深度重置", timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'focus') {
       if (state.isWaitingForRightEye) setUiState({ position: 'CENTER', title: <div className="text-center w-full text-[#00ffcc] mb-2">👁️ 左眼訓練完成！<br/>請換遮左眼，準備進行【右眼】重訓</div>, timer: '', showContinue: true, showInput: false });
       else if (state.focusTimeLeft > 0) {
         const eye = state.focusTimeLeft > 60 ? "👁️ 請遮住右眼，訓練【左眼】" : "👁️ 換遮左眼，訓練【右眼】";
-        setUiState({ position: 'BOTTOM', title: <div className="w-full flex flex-col items-center justify-center text-center"><div className="text-[#00ffcc] mb-3">{eye}</div>{focusTexts[state.focusStep]}</div>, timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false, showInput: false });
+        setUiState({ position: 'BOTTOM', title: <div className="w-full flex flex-col items-center justify-center text-center"><div className="text-[#00ffcc] mb-3">{eye}</div>{focusTexts[state.focusStep]}{blinkReminder}</div>, timer: `重訓剩餘：${state.focusTimeLeft} 秒`, showContinue: false, showInput: false });
       } else if (state.isResting) setUiState({ position: 'CENTER', title: "請閉眼休息5秒鐘", timer: `休息 ${state.restTimeLeft} 秒`, showContinue: false, showInput: false });
       else setUiState({ position: 'CENTER', title: <div className="w-full text-center flex flex-col items-center">🎯 睫狀肌幫浦重訓完成！<br/><br/><span className="text-[18px] text-[#FFD93D]">⚠️ 提醒您：如果覺得眼睛累了請適當休息，<br/>建議接著進行前四個眼睛放鬆模組。</span></div>, timer: completionReminder, showContinue: false, showInput: false });
     } else if (state.module === 'amsler' || state.module === 'astigmatism') {
@@ -1092,6 +1138,8 @@ export default function EyeComfortApp() {
 
     state.sessionStartTime = new Date().toISOString();
     state.pauseCount = 0;
+    state.blinkCount = 0; // 👁️ 重新開始時眨眼次數歸零
+    state.isBlinking = false;
     referenceEyeWidthRef.current = null; 
     setCalibrationStatus('INIT');
     gameState.current.calibrationStatus = 'INIT';

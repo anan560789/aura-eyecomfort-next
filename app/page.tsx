@@ -840,17 +840,33 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
 
+      // ==========================================
+      // 🚨 相機視角與重心統一修正
+      // ==========================================
       const isEffectiveLandscape = gameState.current.isSimulatedLandscape || window.innerWidth > window.innerHeight;
 
-      const targetCamX = isEffectiveLandscape ? 3.5 : 0;
-      camera.position.x += (targetCamX - camera.position.x) * 0.08;
-      camera.lookAt(camera.position.x, 0, -100);
+      if (isEffectiveLandscape) {
+          // 橫向模式：相機往右移一點點，並且「直直看向 Z 軸深處」，這樣左半邊的物體在變小變遠時，就不會飄回螢幕中間。
+          const targetCamX = 4.5; // 相機稍往右移
+          camera.position.x += (targetCamX - camera.position.x) * 0.08;
+          camera.position.y += (0 - camera.position.y) * 0.08;
+          // 強制鎖定相機永遠往前看 (平行 Z 軸)
+          camera.lookAt(camera.position.x, camera.position.y, -100);
+      } else {
+          // 直立模式：相機保持在 X=0，但為了把 3D 物件「往上頂」避開下方的 UI，將相機稍微「往下移」。
+          const targetCamY = -5; // 相機往下移
+          camera.position.x += (0 - camera.position.x) * 0.08;
+          camera.position.y += (targetCamY - camera.position.y) * 0.08;
+          // 同樣強制直直看向前方
+          camera.lookAt(camera.position.x, camera.position.y, -100);
+      }
       
       if (mod === 'sop' && gameState.current.phase !== 'COMPLETED') {
         focusTarget.rotation.x += 0.002; 
         focusTarget.rotation.y += 0.003; 
         focusTarget.position.z = -50;
         
+        // 直立與橫向的基礎縮放比例微調
         const baseScale = isEffectiveLandscape ? 1.4 : 1.0;
         const scale = baseScale * (1 + Math.cos(timeDelta) * 0.25); 
         focusTarget.scale.set(scale, scale, scale);
@@ -889,37 +905,40 @@ export default function EyeComfortApp() {
         const edgeY = visibleHeight / 2;
         
         let centerX = camera.position.x;
-        // 🚨 修正：將 X 軸振幅從 1.30 下修為 0.92，橫向從 0.85 降為 0.75
         let ampX = edgeX * 0.92; 
+        let centerY = camera.position.y;
         
         if (isEffectiveLandscape) {
-            centerX = camera.position.x - edgeX * 0.05; 
+            // 橫向時的振幅調整
             ampX = edgeX * 0.75; 
         }
         
         const ampY = Math.min(edgeY * 0.7, 14); 
         const depthFactor = Math.sin(speed * 0.5); 
         
-        // 動態邊界補償：當球體變小（Z 軸變深）時，稍微縮小 X 軸的振幅
         const depthCompensation = 1 + (depthFactor * 0.15);
         ampX = ampX * depthCompensation;
 
         const scaleVal = 1.45 + depthFactor * 0.75; 
         stretchOrb.scale.setScalar(scaleVal + Math.cos(speed * 3) * 0.1);
         
-        stretchOrb.position.set(centerX + Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, currentZ);
+        // 將 centerY 加入運算，確保球體跟隨相機高度
+        stretchOrb.position.set(centerX + Math.sin(speed) * ampX, centerY + Math.sin(speed * 2) * ampY, currentZ);
       }
       
       if (mod === 'breathe' || mod === 'chaser') { 
         particleSystem.rotation.y += 0.0005; 
         particleSystem.rotation.z += 0.0002; 
+        // 確保星雲對齊相機的 Y 軸
+        breatheGroup.position.y = camera.position.y;
       }
       
       if (mod === 'chaser' && gameState.current.chaserTimeLeft > 0) {
         chaserOrb.position.z -= gameState.current.prescription.chaserSpeed;
         if (chaserOrb.position.z < -120) { 
           gameState.current.chaserScore++; playDingSound(); 
-          chaserOrb.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -10); 
+          // 流星發射時的 Y 軸也加上 camera.position.y 補償
+          chaserOrb.position.set(camera.position.x + (Math.random()-0.5)*20, camera.position.y + (Math.random()-0.5)*15, -10); 
           chaserOrb.scale.setScalar(1); 
           chaserOrb.material.opacity = 1;
         } else {
@@ -940,7 +959,11 @@ export default function EyeComfortApp() {
       if (mod === 'focus' && gameState.current.focusTimeLeft > 0) {
         const dynamicFocusDepths = [-1, -15, -35, gameState.current.prescription.maxDepth];
         focusGroup.position.z += (dynamicFocusDepths[gameState.current.focusStep] - focusGroup.position.z) * 0.15;
+        // 確保對焦環跟隨相機高度
+        focusGroup.position.y = camera.position.y;
+        focusGroup.position.x = camera.position.x;
       }
+
       renderer.render(scene, camera);
     };
     

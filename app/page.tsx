@@ -136,8 +136,8 @@ export default function EyeComfortApp() {
     deviceUiAngle: 0,
     sessionStartTime: '',
     pauseCount: 0,
-    blinkCount: 0, // 👁️ 新增：眨眼次數統計
-    isBlinking: false, // 👁️ 新增：防重複計算眨眼狀態
+    blinkCount: 0,
+    isBlinking: false,
     stateMachineLog: {} as any
   });
 
@@ -281,17 +281,13 @@ export default function EyeComfortApp() {
           
           eyeDistance = Math.hypot(lm[33].x - lm[263].x, lm[33].y - lm[263].y);
 
-          // ==========================================
-          // 👁️ 專利升級：EAR (Eye Aspect Ratio) 眨眼客觀量測
-          // ==========================================
+          // EAR (Eye Aspect Ratio) 眨眼客觀量測
           if (gameState.current.aiStatus === 'TRACKING') {
-            // 左眼高度與寬度計算
             const v1L = Math.hypot(lm[160].x - lm[144].x, lm[160].y - lm[144].y);
             const v2L = Math.hypot(lm[158].x - lm[153].x, lm[158].y - lm[153].y);
             const hL = Math.hypot(lm[33].x - lm[133].x, lm[33].y - lm[133].y);
             const earL = (v1L + v2L) / (2.0 * hL);
 
-            // 右眼高度與寬度計算
             const v1R = Math.hypot(lm[385].x - lm[380].x, lm[385].y - lm[380].y);
             const v2R = Math.hypot(lm[387].x - lm[373].x, lm[387].y - lm[373].y);
             const hR = Math.hypot(lm[362].x - lm[263].x, lm[362].y - lm[263].y);
@@ -299,7 +295,6 @@ export default function EyeComfortApp() {
 
             const avgEAR = (earL + earR) / 2.0;
 
-            // EAR 小於 0.22 通常判定為眼瞼閉合（眨眼）
             if (avgEAR < 0.22) {
                 if (!gameState.current.isBlinking) {
                     gameState.current.blinkCount++;
@@ -555,9 +550,8 @@ export default function EyeComfortApp() {
     const timeStr = `${endTime.getFullYear()}${(endTime.getMonth() + 1).toString().padStart(2, '0')}${endTime.getDate().toString().padStart(2, '0')}_${endTime.getHours().toString().padStart(2, '0')}${endTime.getMinutes().toString().padStart(2, '0')}`;
     const sessionId = `req_${uidPrefix}_${timeStr}`;
 
-    // 👁️ 專利升級：計算客觀放鬆指標
     const blinkRate = (gameState.current.blinkCount / (durationSec || 1)) * 60;
-    const isRelaxed = blinkRate >= 12; // 臨床標準：大於 12 次/分 代表無過度凝視
+    const isRelaxed = blinkRate >= 12;
 
     const logData = {
       session_id: sessionId,
@@ -895,16 +889,21 @@ export default function EyeComfortApp() {
         const edgeY = visibleHeight / 2;
         
         let centerX = camera.position.x;
-        let ampX = edgeX * 1.05; 
+        // 🚨 修正：將 X 軸振幅從 1.30 下修為 0.92，橫向從 0.85 降為 0.75
+        let ampX = edgeX * 0.92; 
         
         if (isEffectiveLandscape) {
             centerX = camera.position.x - edgeX * 0.05; 
-            ampX = edgeX * 0.85; 
+            ampX = edgeX * 0.75; 
         }
         
         const ampY = Math.min(edgeY * 0.7, 14); 
-        
         const depthFactor = Math.sin(speed * 0.5); 
+        
+        // 動態邊界補償：當球體變小（Z 軸變深）時，稍微縮小 X 軸的振幅
+        const depthCompensation = 1 + (depthFactor * 0.15);
+        ampX = ampX * depthCompensation;
+
         const scaleVal = 1.45 + depthFactor * 0.75; 
         stretchOrb.scale.setScalar(scaleVal + Math.cos(speed * 3) * 0.1);
         
@@ -992,7 +991,6 @@ export default function EyeComfortApp() {
       </div>
     );
 
-    // 👁️ 專利升級：常駐的眨眼提醒 UI
     const blinkReminder = (
       <div className="text-[15px] text-[#00ffcc] mt-3 animate-pulse font-normal tracking-wider">
         👁️ 使用過程中請保持正常眨眼
@@ -1138,7 +1136,7 @@ export default function EyeComfortApp() {
 
     state.sessionStartTime = new Date().toISOString();
     state.pauseCount = 0;
-    state.blinkCount = 0; // 👁️ 重新開始時眨眼次數歸零
+    state.blinkCount = 0; 
     state.isBlinking = false;
     referenceEyeWidthRef.current = null; 
     setCalibrationStatus('INIT');

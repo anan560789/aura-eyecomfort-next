@@ -281,7 +281,6 @@ export default function EyeComfortApp() {
           
           eyeDistance = Math.hypot(lm[33].x - lm[263].x, lm[33].y - lm[263].y);
 
-          // EAR (Eye Aspect Ratio) 眨眼客觀量測
           if (gameState.current.aiStatus === 'TRACKING') {
             const v1L = Math.hypot(lm[160].x - lm[144].x, lm[160].y - lm[144].y);
             const v2L = Math.hypot(lm[158].x - lm[153].x, lm[158].y - lm[153].y);
@@ -705,8 +704,12 @@ export default function EyeComfortApp() {
     if (!canvasRef.current) return;
     const scene = new THREE.Scene(); 
     scene.background = new THREE.Color(0x0f141e);
+    
+    // 🚨 終極修正：相機絕對鎖死在中心點 (0, 0, 5)，視線死鎖前方 (0, 0, -100)
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000); 
-    camera.position.z = 5;
+    camera.position.set(0, 0, 5);
+    camera.lookAt(0, 0, -100);
+
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); 
     renderer.setSize(window.innerWidth, window.innerHeight);
     
@@ -729,7 +732,7 @@ export default function EyeComfortApp() {
 
     scene.add(new THREE.AmbientLight(0xfffdd0, 0.6));
 
-    const sopGroup = new THREE.Group(); sopGroup.position.y = 12;
+    const sopGroup = new THREE.Group(); 
     const sopMat = new THREE.MeshStandardMaterial({ color: 0x6b8e23, emissive: 0x2e4b1c, wireframe: true, transparent: true });
     const focusTarget = new THREE.Mesh(new THREE.SphereGeometry(8, 32, 32), sopMat);
     const coreMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true });
@@ -797,7 +800,7 @@ export default function EyeComfortApp() {
         allModules.forEach((m: any) => m.visible = false);
         if (mod === 'sop') { sopGroup.visible = true; sopMat.opacity = 1; coreMat.opacity = 1; }
         if (mod === 'stretch') { stretchGroup.visible = true; stretchOrb.position.set(0,0,-30); }
-        if (mod === 'chaser') { chaserGroup.visible = true; breatheGroup.visible = true; chaserOrb.position.set((Math.random()-0.5)*20, (Math.random()-0.5)*15, -10); chaserOrb.scale.setScalar(1); chaserOrb.material.opacity = 1; }
+        if (mod === 'chaser') { chaserGroup.visible = true; breatheGroup.visible = true; chaserOrb.position.set((Math.random()-0.5)*15, (Math.random()-0.5)*10, -10); chaserOrb.scale.setScalar(1); chaserOrb.material.opacity = 1; }
         if (mod === 'breathe') { breatheGroup.visible = true; }
         if (mod === 'focus') { focusGroup.visible = true; focusGroup.position.z = focusDepths[0]; focusRing.material.color.setHex(focusColors[0]); }
         if (mod === 'amsler') { amslerGroup.visible = true; }
@@ -820,6 +823,38 @@ export default function EyeComfortApp() {
       }
     };
 
+    // 🚨 核心修復：使用 setViewOffset 控制透視消失點矩陣，不再移動任何群組或相機
+    const handleResize = () => { 
+      setTimeout(() => {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const isNative = w > h;
+        const sim = gameState.current.isSimulatedLandscape;
+        const angle = isNative ? 0 : (sim ? gyroAngleRef.current : 0);
+
+        const renderW = angle !== 0 ? Math.max(w, h) : Math.min(w, h);
+        const renderH = angle !== 0 ? Math.min(w, h) : Math.max(w, h);
+
+        if (camera && renderer) {
+          camera.aspect = renderW / renderH; 
+          
+          const isEffectiveLandscape = renderW > renderH;
+          if (isEffectiveLandscape) {
+              // 橫向時：將視角中心（消失點）向左側移動 25% 螢幕寬度。完全鎖定左半邊。
+              camera.setViewOffset(renderW, renderH, renderW * 0.25, 0, renderW, renderH);
+          } else {
+              // 直立時：將視角中心（消失點）向上移動 15% 螢幕高度。完美避開底部 UI。
+              camera.setViewOffset(renderW, renderH, 0, renderH * 0.15, renderW, renderH);
+          }
+
+          camera.updateProjectionMatrix(); 
+          renderer.setSize(renderW, renderH); 
+        }
+      }, 50);
+    };
+    window.addEventListener('resize', handleResize);
+    handleResize(); // 初始化時強制執行一次光學矩陣校正
+
     let lastRenderTime = performance.now();
 
     const animate = () => {
@@ -839,35 +874,18 @@ export default function EyeComfortApp() {
       gameState.current.activeTimeAcc += delta;
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
-
-      // ==========================================
-      // 🚨 相機視角與重心統一修正
-      // ==========================================
       const isEffectiveLandscape = gameState.current.isSimulatedLandscape || window.innerWidth > window.innerHeight;
 
-      if (isEffectiveLandscape) {
-          // 橫向模式：相機往右移一點點，並且「直直看向 Z 軸深處」，這樣左半邊的物體在變小變遠時，就不會飄回螢幕中間。
-          const targetCamX = 4.5; // 相機稍往右移
-          camera.position.x += (targetCamX - camera.position.x) * 0.08;
-          camera.position.y += (0 - camera.position.y) * 0.08;
-          // 強制鎖定相機永遠往前看 (平行 Z 軸)
-          camera.lookAt(camera.position.x, camera.position.y, -100);
-      } else {
-          // 直立模式：相機保持在 X=0，但為了把 3D 物件「往上頂」避開下方的 UI，將相機稍微「往下移」。
-          const targetCamY = -5; // 相機往下移
-          camera.position.x += (0 - camera.position.x) * 0.08;
-          camera.position.y += (targetCamY - camera.position.y) * 0.08;
-          // 同樣強制直直看向前方
-          camera.lookAt(camera.position.x, camera.position.y, -100);
-      }
-      
+      // ==========================================
+      // 取消所有的相機移動與群組平移 Hack，完全交給 setViewOffset 處理
+      // ==========================================
+
       if (mod === 'sop' && gameState.current.phase !== 'COMPLETED') {
         focusTarget.rotation.x += 0.002; 
         focusTarget.rotation.y += 0.003; 
         focusTarget.position.z = -50;
         
-        // 直立與橫向的基礎縮放比例微調
-        const baseScale = isEffectiveLandscape ? 1.4 : 1.0;
+        const baseScale = isEffectiveLandscape ? 1.3 : 1.0;
         const scale = baseScale * (1 + Math.cos(timeDelta) * 0.25); 
         focusTarget.scale.set(scale, scale, scale);
         
@@ -904,41 +922,32 @@ export default function EyeComfortApp() {
         const edgeX = visibleWidth / 2; 
         const edgeY = visibleHeight / 2;
         
-        let centerX = camera.position.x;
-        let ampX = edgeX * 0.92; 
-        let centerY = camera.position.y;
-        
+        let ampX = edgeX * 0.85; 
         if (isEffectiveLandscape) {
-            // 橫向時的振幅調整
-            ampX = edgeX * 0.75; 
+            ampX = edgeX * 0.45; // 橫向時只要確保在視角的一半內即可，setViewOffset 已負責置中
         }
         
-        const ampY = Math.min(edgeY * 0.7, 14); 
+        const ampY = Math.min(edgeY * 0.6, 12); 
         const depthFactor = Math.sin(speed * 0.5); 
         
-        const depthCompensation = 1 + (depthFactor * 0.15);
-        ampX = ampX * depthCompensation;
-
         const scaleVal = 1.45 + depthFactor * 0.75; 
         stretchOrb.scale.setScalar(scaleVal + Math.cos(speed * 3) * 0.1);
         
-        // 將 centerY 加入運算，確保球體跟隨相機高度
-        stretchOrb.position.set(centerX + Math.sin(speed) * ampX, centerY + Math.sin(speed * 2) * ampY, currentZ);
+        // 乾淨俐落的正弦軌跡，不帶任何奇怪的補償值
+        stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, currentZ);
       }
       
       if (mod === 'breathe' || mod === 'chaser') { 
         particleSystem.rotation.y += 0.0005; 
         particleSystem.rotation.z += 0.0002; 
-        // 確保星雲對齊相機的 Y 軸
-        breatheGroup.position.y = camera.position.y;
       }
       
       if (mod === 'chaser' && gameState.current.chaserTimeLeft > 0) {
         chaserOrb.position.z -= gameState.current.prescription.chaserSpeed;
         if (chaserOrb.position.z < -120) { 
           gameState.current.chaserScore++; playDingSound(); 
-          // 流星發射時的 Y 軸也加上 camera.position.y 補償
-          chaserOrb.position.set(camera.position.x + (Math.random()-0.5)*20, camera.position.y + (Math.random()-0.5)*15, -10); 
+          // 確保流星從(0,0)的中心區域產生，這樣它飛向深空時才會完美收斂在我們用矩陣設定的消失點
+          chaserOrb.position.set((Math.random()-0.5)*15, (Math.random()-0.5)*10, -10); 
           chaserOrb.scale.setScalar(1); 
           chaserOrb.material.opacity = 1;
         } else {
@@ -959,37 +968,12 @@ export default function EyeComfortApp() {
       if (mod === 'focus' && gameState.current.focusTimeLeft > 0) {
         const dynamicFocusDepths = [-1, -15, -35, gameState.current.prescription.maxDepth];
         focusGroup.position.z += (dynamicFocusDepths[gameState.current.focusStep] - focusGroup.position.z) * 0.15;
-        // 確保對焦環跟隨相機高度
-        focusGroup.position.y = camera.position.y;
-        focusGroup.position.x = camera.position.x;
       }
 
       renderer.render(scene, camera);
     };
     
     renderer.setAnimationLoop(animate);
-    
-    const handleResize = () => { 
-      setTimeout(() => {
-        const w = window.innerWidth;
-        const h = window.innerHeight;
-        const isNative = w > h;
-        const sim = gameState.current.isSimulatedLandscape;
-        const angle = isNative ? 0 : (sim ? gyroAngleRef.current : 0);
-
-        const renderW = angle !== 0 ? Math.max(w, h) : Math.min(w, h);
-        const renderH = angle !== 0 ? Math.min(w, h) : Math.max(w, h);
-
-        if (camera) {
-          camera.aspect = renderW / renderH; 
-          camera.updateProjectionMatrix(); 
-        }
-        if (renderer) {
-          renderer.setSize(renderW, renderH); 
-        }
-      }, 50);
-    };
-    window.addEventListener('resize', handleResize);
     
     return () => { 
       window.removeEventListener('resize', handleResize); 

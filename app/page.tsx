@@ -20,9 +20,7 @@ const supabase = createClient(supabaseUrl, supabaseKey);
 // ==========================================
 const AURA_SECRET_SALT = "AuraDTx_Patent_2026_Strict_Compliance_O2O";
 async function generateHMAC(payload: any) {
-  // 將資料轉為字串並加上專屬安全鹽
   const msgUint8 = new TextEncoder().encode(JSON.stringify(payload) + AURA_SECRET_SALT);
-  // 使用 Web Crypto API 進行 SHA-256 雜湊運算
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
@@ -138,7 +136,8 @@ export default function EyeComfortApp() {
     activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
     isValidTraining: false, 
     calibrationStatus: 'INIT',
-    prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 },
+    // 👁️ 處方等級動態參數擴充：breathCycleTime 定義了「吸氣+吐氣」的完整秒數
+    prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45, breathCycleTime: 10 },
     isSimulatedLandscape: false,
     deviceUiAngle: 0,
     sessionStartTime: '',
@@ -515,9 +514,6 @@ export default function EyeComfortApp() {
     }, 100);
   }, []);
 
-  // ==========================================
-  // 🚨 專利防護核心：退避補傳與資料防竄改稽核
-  // ==========================================
   const syncOfflineLogs = useCallback(async () => {
     const offlineKey = 'aura_offline_logs';
     const rawLogs = localStorage.getItem(offlineKey);
@@ -530,7 +526,6 @@ export default function EyeComfortApp() {
     const validLogs = [];
     let tamperedCount = 0;
 
-    // 本機稽核：重新計算簽章進行比對
     for (const log of offlineLogs) {
       if (!log.digital_signature) {
         tamperedCount++;
@@ -562,7 +557,6 @@ export default function EyeComfortApp() {
         console.log("⏳ 雲端同步例外，等待退避重傳...");
       }
     } else {
-      // 如果全部都是竄改資料，直接清空以釋放空間
       localStorage.removeItem(offlineKey);
     }
   }, []);
@@ -597,7 +591,6 @@ export default function EyeComfortApp() {
     const blinkRate = (gameState.current.blinkCount / (durationSec || 1)) * 60;
     const isRelaxed = blinkRate >= 12;
 
-    // 準備要加密防竄改的 Payload
     const payloadForSignature = {
       session_id: sessionId,
       auth_code: redeemCode || "FREE-TIER",
@@ -627,7 +620,6 @@ export default function EyeComfortApp() {
       created_at: endTimeStr 
     };
 
-    // 🔒 產生 SHA-256 HMAC 數位簽章
     const signature = await generateHMAC(payloadForSignature);
     const logData = { ...payloadForSignature, digital_signature: signature };
 
@@ -685,9 +677,10 @@ export default function EyeComfortApp() {
     const todayCycles = parseInt(localStorage.getItem(`rehab_cycles_${todayStr}`) || '0', 10);
     setCalendarData({ todayCycles, monthCycles, days, today: todayDate, year, month });
 
-    let newPrescription = { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45 };
-    if (monthCycles >= 3) { newPrescription = { level: 2, stretchSpeed: 0.8, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60 }; }
-    if (monthCycles >= 7) { newPrescription = { level: 3, stretchSpeed: 1.0, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75 }; }
+    // 👁️ 根據處方等級，動態賦予呼吸模組的循環秒數 (Level 1: 10s, Level 2: 12s, Level 3: 16s)
+    let newPrescription = { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45, breathCycleTime: 10 };
+    if (monthCycles >= 3) { newPrescription = { level: 2, stretchSpeed: 0.8, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60, breathCycleTime: 12 }; }
+    if (monthCycles >= 7) { newPrescription = { level: 3, stretchSpeed: 1.0, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75, breathCycleTime: 16 }; }
     gameState.current.prescription = newPrescription;
     setAiPrescriptionLevel(newPrescription.level);
   }, []);
@@ -755,7 +748,6 @@ export default function EyeComfortApp() {
     const scene = new THREE.Scene(); 
     scene.background = new THREE.Color(0x0f141e);
     
-    // 🚨 終極修正：相機絕對鎖死在中心點 (0, 0, 5)，視線死鎖前方 (0, 0, -100)
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000); 
     camera.position.set(0, 0, 5);
     camera.lookAt(0, 0, -100);
@@ -873,7 +865,6 @@ export default function EyeComfortApp() {
       }
     };
 
-    // 🚨 核心修復：使用 setViewOffset 控制透視消失點矩陣，不再移動任何群組或相機
     const handleResize = () => { 
       setTimeout(() => {
         const w = window.innerWidth;
@@ -890,10 +881,8 @@ export default function EyeComfortApp() {
           
           const isEffectiveLandscape = renderW > renderH;
           if (isEffectiveLandscape) {
-              // 橫向時：將視角中心（消失點）向左側移動 25% 螢幕寬度。完全鎖定左半邊。
               camera.setViewOffset(renderW, renderH, renderW * 0.25, 0, renderW, renderH);
           } else {
-              // 直立時：將視角中心（消失點）向上移動 15% 螢幕高度。完美避開底部 UI。
               camera.setViewOffset(renderW, renderH, 0, renderH * 0.15, renderW, renderH);
           }
 
@@ -903,7 +892,7 @@ export default function EyeComfortApp() {
       }, 50);
     };
     window.addEventListener('resize', handleResize);
-    handleResize(); // 初始化時強制執行一次光學矩陣校正
+    handleResize(); 
 
     let lastRenderTime = performance.now();
 
@@ -925,10 +914,6 @@ export default function EyeComfortApp() {
       
       const timeDelta = gameState.current.activeTimeAcc * 0.0012;
       const isEffectiveLandscape = gameState.current.isSimulatedLandscape || window.innerWidth > window.innerHeight;
-
-      // ==========================================
-      // 取消所有的相機移動與群組平移 Hack，完全交給 setViewOffset 處理
-      // ==========================================
 
       if (mod === 'sop' && gameState.current.phase !== 'COMPLETED') {
         focusTarget.rotation.x += 0.002; 
@@ -974,7 +959,7 @@ export default function EyeComfortApp() {
         
         let ampX = edgeX * 0.85; 
         if (isEffectiveLandscape) {
-            ampX = edgeX * 0.45; // 橫向時只要確保在視角的一半內即可，setViewOffset 已負責置中
+            ampX = edgeX * 0.45; 
         }
         
         const ampY = Math.min(edgeY * 0.6, 12); 
@@ -983,7 +968,6 @@ export default function EyeComfortApp() {
         const scaleVal = 1.45 + depthFactor * 0.75; 
         stretchOrb.scale.setScalar(scaleVal + Math.cos(speed * 3) * 0.1);
         
-        // 乾淨俐落的正弦軌跡，不帶任何奇怪的補償值
         stretchOrb.position.set(Math.sin(speed) * ampX, Math.sin(speed * 2) * ampY, currentZ);
       }
       
@@ -996,7 +980,6 @@ export default function EyeComfortApp() {
         chaserOrb.position.z -= gameState.current.prescription.chaserSpeed;
         if (chaserOrb.position.z < -120) { 
           gameState.current.chaserScore++; playDingSound(); 
-          // 確保流星從(0,0)的中心區域產生，這樣它飛向深空時才會完美收斂在我們用矩陣設定的消失點
           chaserOrb.position.set((Math.random()-0.5)*15, (Math.random()-0.5)*10, -10); 
           chaserOrb.scale.setScalar(1); 
           chaserOrb.material.opacity = 1;
@@ -1009,7 +992,12 @@ export default function EyeComfortApp() {
       }
       
       if (mod === 'breathe' && gameState.current.breatheTimeLeft > 0) {
-        const breathCycle = Math.sin((gameState.current.activeTimeAcc % 10000) / 10000 * Math.PI * 2);
+        // 👁️ 根據處方等級，動態計算呼吸的正弦波週期
+        // activeTimeAcc 是以毫秒為單位的累積時間。
+        // 原本是 10000 毫秒(10秒)為一週期。現在改由 prescription.breathCycleTime 決定。
+        const cycleMs = gameState.current.prescription.breathCycleTime * 1000;
+        const breathCycle = Math.sin((gameState.current.activeTimeAcc % cycleMs) / cycleMs * Math.PI * 2);
+        
         const currentScale = 1.05 + breathCycle * 0.25; 
         particleSystem.scale.setScalar(currentScale); 
         particlesMat.color.setHSL(0.5 + breathCycle * 0.1, 0.8, 0.4 + breathCycle * 0.2);
@@ -1017,7 +1005,6 @@ export default function EyeComfortApp() {
       
       if (mod === 'focus' && gameState.current.focusTimeLeft > 0) {
         const dynamicFocusDepths = [-1, -15, -35, gameState.current.prescription.maxDepth];
-        // 不要再動 group.position.x 和 y，只動 Z
         focusGroup.position.z += (dynamicFocusDepths[gameState.current.focusStep] - focusGroup.position.z) * 0.15;
       }
 
@@ -1136,9 +1123,15 @@ export default function EyeComfortApp() {
       } else if (state.module === 'breathe') {
         if (state.breatheTimeLeft <= 0) return;
         state.breatheTimeLeft--;
+        
         if (state.breatheTimeLeft > 0) {
-          if (state.breatheTimeLeft % 10 === 5) { state.breathPhase = 'INHALE'; playDingSound(); }
-          else if (state.breatheTimeLeft % 10 === 0) { state.breathPhase = 'EXHALE'; playDingSound(); }
+          // 👁️ 根據動態週期，決定何時觸發「吸氣」與「吐氣」的語音/音效提示
+          const halfCycle = state.prescription.breathCycleTime / 2;
+          if (state.breatheTimeLeft % state.prescription.breathCycleTime === halfCycle) { 
+              state.breathPhase = 'INHALE'; playDingSound(); 
+          } else if (state.breatheTimeLeft % state.prescription.breathCycleTime === 0) { 
+              state.breathPhase = 'EXHALE'; playDingSound(); 
+          }
         } else { state.isResting = true; state.restTimeLeft = 5; dipBGM(); playDingSound(); recordModuleCompletion('breathe'); logTraining('星雲散焦與神經放鬆', 60); }
       } else if (state.module === 'focus') {
         if (state.isWaitingForRightEye || state.focusTimeLeft <= 0) return;
@@ -1231,7 +1224,13 @@ export default function EyeComfortApp() {
     if (type === 'sop') { state.cycle = 1; state.sopTimeLeft = 10; playBGM('/game1.mp3'); }
     else if (type === 'stretch') { state.stretchTimeLeft = 45; playBGM('/game2.mp3'); }
     else if (type === 'chaser') { state.chaserTimeLeft = 60; state.chaserScore = 0; playBGM('/game3.mp3'); }
-    else if (type === 'breathe') { state.breatheTimeLeft = 60; state.breathPhase = 'INHALE'; playBGM('/game4.mp3'); }
+    else if (type === 'breathe') { 
+        state.breatheTimeLeft = 60; 
+        state.breathPhase = 'INHALE'; 
+        // 確保起始計時器是循環秒數的倍數，讓吸吐節奏正確啟動
+        state.breatheTimeLeft = Math.floor(60 / state.prescription.breathCycleTime) * state.prescription.breathCycleTime;
+        playBGM('/game4.mp3'); 
+    }
     else if (type === 'focus') { state.focusTimeLeft = 120; state.focusStep = 0; state.focusDirection = 1; state.isWaitingForRightEye = false; playBGM('/game5.mp3'); }
     else if (type === 'amsler' || type === 'astigmatism') { state.testPhase = 'LEFT_EYE_TEST'; state.testTimeLeft = 15; setTestResults({ leftEye: null, rightEye: null }); }
     

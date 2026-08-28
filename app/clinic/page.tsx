@@ -52,22 +52,25 @@ export default function ClinicDashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [stats, setStats] = useState({ total: 0, verified: 0, tampered: 0, totalSeconds: 0 });
 
+  // 更新後的診所端讀取邏輯
   const handleLogin = () => {
-    // 簡單的診所端密碼鎖 (未來可接 Supabase Auth)
-    if (passcode === 'AURA2026') {
+    // 假設醫師輸入的授權碼 (passcode) 就是診所的代號 (例如 'CLINIC_A')
+    if (passcode.trim() !== '') {
       setIsAuthenticated(true);
       fetchLogs();
     } else {
-      alert('授權碼錯誤');
+      alert('請輸入診所代碼');
     }
   };
 
   const fetchLogs = async () => {
     setIsLoading(true);
-    // 抓取最新的 50 筆病患訓練紀錄
+    
+    // 🔒 資料隔離核心：只撈取該診所代碼 (passcode) 對應的訓練紀錄
     const { data, error } = await supabase
       .from('training_logs')
       .select('*')
+      .eq('clinic_id', passcode.trim().toUpperCase()) // 👈 新增這行進行過濾
       .order('created_at', { ascending: false })
       .limit(50);
 

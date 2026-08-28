@@ -171,14 +171,57 @@ export default function EyeComfortApp() {
     setIsPremiumUnlocked(unlocked);
   }, []);
 
-  const handleRedeemCode = () => {
-    if (redeemCode.toUpperCase() === 'EYE-A8F2-99B1') {
+  // ==========================================
+  // 🏥 O2O 核心：動態授權碼驗證與診所綁定邏輯
+  // ==========================================
+  const handleRedeemCode = async () => {
+    if (!redeemCode || redeemCode.trim() === '') {
+      alert('請輸入授權碼');
+      return;
+    }
+
+    try {
+      const { data: codeData, error: codeError } = await supabase
+        .from('activation_codes')
+        .select('*')
+        .eq('code', redeemCode.trim().toUpperCase())
+        .single();
+
+      if (codeError || !codeData) {
+        alert('❌ 無效的授權碼，請檢查實體卡片上的序號或聯絡診所。');
+        return;
+      }
+
+      if (codeData.status !== 'ACTIVE' && codeData.status !== 'AVAILABLE') {
+        alert('❌ 此授權碼已失效或已被使用。');
+        return;
+      }
+
       localStorage.setItem('aura_premium_unlocked', 'true');
+      localStorage.setItem('aura_clinic_id', codeData.clinic_id || 'UNKNOWN'); 
+      localStorage.setItem('aura_activation_code', codeData.code);
+      
       setIsPremiumUnlocked(true);
       setShowRedeemModal(false);
-      alert('✅ 兌換成功！已為您解鎖 30 天數位護眼計畫全套高階模組。');
-    } else {
-      alert('❌ 無效的授權碼，請檢查實體卡片上的 12 碼序號。');
+      
+      if (lineProfile.uid !== '未登入') {
+         await supabase.from('patients_mapping').upsert({
+             line_uid: lineProfile.uid,
+             clinic_id: codeData.clinic_id,
+             activation_code: codeData.code,
+             bound_at: new Date().toISOString()
+         });
+         
+         await supabase.from('activation_codes')
+             .update({ status: 'USED', used_by_line_uid: lineProfile.uid })
+             .eq('code', codeData.code);
+      }
+
+      alert(`✅ 兌換成功！已解鎖由 [${codeData.clinic_id || '授權診所'}] 開立的數位護眼計畫。`);
+      
+    } catch (err) {
+      console.error("驗證失敗", err);
+      alert('網路連線異常，請稍後再試。');
     }
   };
 
@@ -581,9 +624,6 @@ export default function EyeComfortApp() {
     return 'Web';
   };
 
-  // ==========================================
-  // 🚨 專利升級：UUIDv4、Sequence ID 與 雜湊鏈結 (Hash Chaining)
-  // ==========================================
   const logTraining = async (moduleName: string, durationSec: number) => { 
     if (!lineProfile.uid || lineProfile.uid === '未登入') return; 
   
@@ -591,34 +631,35 @@ export default function EyeComfortApp() {
     const startTimeStr = gameState.current.sessionStartTime || endTime.toISOString();
     const endTimeStr = endTime.toISOString();
   
-    // 1. 生成不可碰撞的絕對 UUIDv4
     let sessionUuid;
     try {
       sessionUuid = crypto.randomUUID();
     } catch(e) {
-      // 備用方案 (防某些舊瀏覽器)
       sessionUuid = 'req_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
     }
 
-    // 2. 嚴格單調遞增的 Sequence ID
     const seqKey = 'aura_event_sequence_id';
     let currentSeq = parseInt(localStorage.getItem(seqKey) || '0', 10);
     currentSeq++;
     localStorage.setItem(seqKey, currentSeq.toString());
 
-    // 3. 時序雜湊鏈結 (Hash Chaining)
     const lastHashKey = 'aura_last_event_hash';
     const previousHash = localStorage.getItem(lastHashKey) || 'GENESIS_HASH_00000000000000000000';
 
     const blinkRate = (gameState.current.blinkCount / (durationSec || 1)) * 60;
     const isRelaxed = blinkRate >= 12;
 
+    // 🏥 帶入該病患綁定的診所代碼與授權碼
+    const clinicId = localStorage.getItem('aura_clinic_id') || 'UNKNOWN';
+    const authCode = localStorage.getItem('aura_activation_code') || "FREE-TIER";
+
     const payloadForSignature = {
       session_id: sessionUuid,
       sequence_id: currentSeq,
       previous_hash: previousHash,
       line_uid: lineProfile.uid,
-      auth_code: redeemCode || "FREE-TIER",
+      auth_code: authCode,
+      clinic_id: clinicId, // 確保資料庫寫入這項屬性，供診所後台分流用
       device_info: {
         os_platform: getDevicePlatform(),
         screen_refresh_rate: 60
@@ -645,8 +686,6 @@ export default function EyeComfortApp() {
     };
 
     const signature = await generateHMAC(payloadForSignature);
-    
-    // 4. 更新本地端的 lastHash，將當前簽章作為下一筆的防護鑰匙
     localStorage.setItem(lastHashKey, signature);
     
     const logData = { ...payloadForSignature, digital_signature: signature };

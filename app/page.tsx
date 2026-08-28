@@ -219,6 +219,7 @@ export default function EyeComfortApp() {
              line_uid: lineProfile.uid,
              clinic_id: codeData.clinic_id,
              activation_code: codeData.code,
+             real_name: lineProfile.name,
              bound_at: new Date().toISOString()
          });
          

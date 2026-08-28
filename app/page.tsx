@@ -16,7 +16,7 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ==========================================
-// 🚨 專利防護核心：醫療級防竄改 HMAC 數位簽章引擎
+// 🚨 專利防護核心：醫療級防竄改 HMAC 與雜湊鏈結引擎
 // ==========================================
 const AURA_SECRET_SALT = "AuraDTx_Patent_2026_Strict_Compliance_O2O";
 async function generateHMAC(payload: any) {
@@ -48,18 +48,20 @@ const medicalPrinciples: Record<string, any> = {
 type TestResult = 'NORMAL' | 'ABNORMAL' | null;
 interface DiagnosticData { leftEye: TestResult; rightEye: TestResult; }
 
-// ==========================================
-// 🚨 專利防護核心：連續 1.5 秒遲滯狀態機 (Hysteresis)
-// ==========================================
 function useSafetyStateMachine(currentFaceState: string) {
   const [isValidTraining, setIsValidTraining] = useState(false);
   const hysteresisTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // 1. 如果失去追蹤，立刻降下防護閘門 (切斷訓練狀態)
-    if (currentFaceState !== 'TRACKING') {
+    if (
+      currentFaceState === 'NO_PERMISSION' ||
+      currentFaceState === 'LOST' ||
+      currentFaceState === 'TOO_CLOSE' ||
+      currentFaceState === 'INITIALIZING' ||
+      currentFaceState === 'CALIBRATING' ||
+      currentFaceState === 'IDLE'
+    ) {
       setIsValidTraining(false);
-      // 清除任何正在進行的 1.5 秒恢復計時，確保不會意外放行
       if (hysteresisTimerRef.current) {
         clearTimeout(hysteresisTimerRef.current);
         hysteresisTimerRef.current = null;
@@ -67,21 +69,19 @@ function useSafetyStateMachine(currentFaceState: string) {
       return;
     }
 
-    // 2. 如果狀態是 TRACKING，且目前閘門尚未開啟
-    if (currentFaceState === 'TRACKING' && !isValidTraining) {
-      // 啟動嚴格的 1.5 秒遲滯計時器
+    if (currentFaceState === 'TRACKING') {
+      if (isValidTraining) return;
+
       if (!hysteresisTimerRef.current) {
         hysteresisTimerRef.current = setTimeout(() => {
-          // 只有連續 1.5 秒都沒有被打斷，才會將 isValidTraining 設為 true
           setIsValidTraining(true);
           hysteresisTimerRef.current = null;
         }, 1500); 
       }
     }
 
-    // 清理函數：組件卸載時清除計時器
     return () => {
-      // 這裡不無條件 clearTimeout，否則 React re-render 會中斷合法的 1.5 秒等待
+      if (hysteresisTimerRef.current) clearTimeout(hysteresisTimerRef.current);
     };
   }, [currentFaceState, isValidTraining]);
 
@@ -122,7 +122,7 @@ export default function EyeComfortApp() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
-  const trackingLoopRef = useRef<number>(0); // 更改為 number 以適應 requestAnimationFrame
+  const trackingLoopRef = useRef<number>(0);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<any>(null); 
@@ -134,7 +134,7 @@ export default function EyeComfortApp() {
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
     activeTimeAcc: 0, stretchAngle: 0, 
-    trackingState: 'IDLE', // 🚨 確保計時器能同步讀取最新權限狀態
+    trackingState: 'IDLE', 
     isValidTraining: false, 
     calibrationStatus: 'INIT',
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45, breathCycleTime: 10 },
@@ -256,9 +256,6 @@ export default function EyeComfortApp() {
     return () => clearInterval(timer);
   }, [trackingState]);
 
-  // ==========================================
-  // 🚨 專利效能升級：無延遲的 requestAnimationFrame 追蹤引擎
-  // ==========================================
   const startTrackingLoop = useCallback(() => {
     let lostFrames = 0;
     let lastVideoTime = -1;
@@ -270,12 +267,10 @@ export default function EyeComfortApp() {
       let isLost = false; 
       let isTooClose = false;
 
-      // 確保影片播放中，且已產生新的幀才處理 (徹底移除 setTimeout 瓶頸)
       if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
         lastVideoTime = video.currentTime;
         const startTimeMs = performance.now();
         
-        // 實際執行時間約 10~20ms，總延遲控制在 42ms 內
         const results = faceLandmarkerRef.current.detectForVideo(video, startTimeMs);
         
         let yawRatio = 1; 
@@ -295,7 +290,6 @@ export default function EyeComfortApp() {
           
           eyeDistance = Math.hypot(lm[33].x - lm[263].x, lm[33].y - lm[263].y);
 
-          // EAR (Eye Aspect Ratio) 眨眼偵測
           if (gameState.current.trackingState === 'TRACKING') {
             const v1L = Math.hypot(lm[160].x - lm[144].x, lm[160].y - lm[144].y);
             const v2L = Math.hypot(lm[158].x - lm[153].x, lm[158].y - lm[153].y);
@@ -362,7 +356,6 @@ export default function EyeComfortApp() {
             }
         }
 
-        // 強制放行 SOP 閉眼階段
         if (isSopClosing) { 
           isLost = false; 
           isTooClose = false; 
@@ -372,7 +365,6 @@ export default function EyeComfortApp() {
           }
         }
 
-        // 嚴格幀數判定 (30fps 下，3幀約 100ms 即判定為 LOST，反應極快)
         if (isLost) {
           lostFrames++;
           if ((lostFrames > 3 && gameState.current.trackingState === 'TRACKING') || (lostFrames > 3 && gameState.current.trackingState === 'TOO_CLOSE')) {
@@ -401,7 +393,6 @@ export default function EyeComfortApp() {
           }
         }
       }
-      // 使用高效能動畫幀呼叫，取代 setTimeout
       trackingLoopRef.current = requestAnimationFrame(track);
     };
     track();
@@ -430,7 +421,6 @@ export default function EyeComfortApp() {
       }
     } catch (err) {
       console.error("相機存取失敗", err);
-      // 🚨 絕對狀態：同步標記權限拒絕
       gameState.current.trackingState = 'NO_PERMISSION'; 
       setTrackingState('NO_PERMISSION'); 
     }
@@ -591,6 +581,9 @@ export default function EyeComfortApp() {
     return 'Web';
   };
 
+  // ==========================================
+  // 🚨 專利升級：UUIDv4、Sequence ID 與 雜湊鏈結 (Hash Chaining)
+  // ==========================================
   const logTraining = async (moduleName: string, durationSec: number) => { 
     if (!lineProfile.uid || lineProfile.uid === '未登入') return; 
   
@@ -598,15 +591,33 @@ export default function EyeComfortApp() {
     const startTimeStr = gameState.current.sessionStartTime || endTime.toISOString();
     const endTimeStr = endTime.toISOString();
   
-    const uidPrefix = lineProfile.uid.substring(0, 4);
-    const timeStr = `${endTime.getFullYear()}${(endTime.getMonth() + 1).toString().padStart(2, '0')}${endTime.getDate().toString().padStart(2, '0')}_${endTime.getHours().toString().padStart(2, '0')}${endTime.getMinutes().toString().padStart(2, '0')}`;
-    const sessionId = `req_${uidPrefix}_${timeStr}`;
+    // 1. 生成不可碰撞的絕對 UUIDv4
+    let sessionUuid;
+    try {
+      sessionUuid = crypto.randomUUID();
+    } catch(e) {
+      // 備用方案 (防某些舊瀏覽器)
+      sessionUuid = 'req_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    }
+
+    // 2. 嚴格單調遞增的 Sequence ID
+    const seqKey = 'aura_event_sequence_id';
+    let currentSeq = parseInt(localStorage.getItem(seqKey) || '0', 10);
+    currentSeq++;
+    localStorage.setItem(seqKey, currentSeq.toString());
+
+    // 3. 時序雜湊鏈結 (Hash Chaining)
+    const lastHashKey = 'aura_last_event_hash';
+    const previousHash = localStorage.getItem(lastHashKey) || 'GENESIS_HASH_00000000000000000000';
 
     const blinkRate = (gameState.current.blinkCount / (durationSec || 1)) * 60;
     const isRelaxed = blinkRate >= 12;
 
     const payloadForSignature = {
-      session_id: sessionId,
+      session_id: sessionUuid,
+      sequence_id: currentSeq,
+      previous_hash: previousHash,
+      line_uid: lineProfile.uid,
       auth_code: redeemCode || "FREE-TIER",
       device_info: {
         os_platform: getDevicePlatform(),
@@ -630,18 +641,21 @@ export default function EyeComfortApp() {
         relaxation_achieved: isRelaxed
       },
       state_machine_details: gameState.current.stateMachineLog,
-      line_uid: lineProfile.uid,
       created_at: endTimeStr 
     };
 
     const signature = await generateHMAC(payloadForSignature);
+    
+    // 4. 更新本地端的 lastHash，將當前簽章作為下一筆的防護鑰匙
+    localStorage.setItem(lastHashKey, signature);
+    
     const logData = { ...payloadForSignature, digital_signature: signature };
 
     try { 
       const { error } = await supabase.from('training_logs').insert([logData]); 
       if (error) throw error;
     } catch (err) {
-      console.warn("⚠️ 網路異常，已將受簽章保護的訓練紀錄暫存至邊緣端 LocalStorage");
+      console.warn("⚠️ 網路異常，已將受簽章保護的時序鏈結紀錄暫存至邊緣端 LocalStorage");
       const offlineKey = 'aura_offline_logs';
       const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
       offlineLogs.push(logData);
@@ -1103,12 +1117,9 @@ export default function EyeComfortApp() {
 
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(state.module) || (state.module === 'sop' && state.phase === 'LOOKING');
       
-      // 🚨 防線UI：相機權限絕對阻斷與狀態攔截
       if (requiresTracking) {
-        // 如果沒有相機權限，絕對不允許時間前進，連休息時間也阻斷
         if (state.trackingState === 'NO_PERMISSION') return;
 
-        // 如果不處於有效訓練狀態 (包含 LOST, TOO_CLOSE，或還在 1.5 秒遲滯期內)，凍結時間
         if (!state.isValidTraining && !state.isResting && state.phase !== 'COMPLETED') {
            return;
         }

@@ -18,7 +18,8 @@ const AURA_SECRET_SALT = "AuraDTx_Patent_2026_Strict_Compliance_O2O";
 // 在後台重新計算一次 Hash，與資料庫存的 digital_signature 比對
 async function verifyHMAC(log: any) {
   try {
-    // 嚴格對齊前端 App 的 12 個欄位順序與結構
+    // 🚨 完美還原引擎：強制按照前端送出的嚴格順序與 ISO 時間格式重組物件
+    // 藉此對抗 Supabase 自動轉換 JSONB 鍵值排序與時區格式的問題
     const payloadForSignature = {
       session_id: log.session_id,
       sequence_id: log.sequence_id,
@@ -27,12 +28,29 @@ async function verifyHMAC(log: any) {
       auth_code: log.auth_code,
       clinic_id: log.clinic_id,
       real_name: log.real_name,
-      device_info: log.device_info,
-      training_context: log.training_context,
-      performance_metrics: log.performance_metrics,
-      objective_metrics: log.objective_metrics,
-      state_machine_details: log.state_machine_details,
-      created_at: log.created_at
+      device_info: {
+        os_platform: log.device_info?.os_platform,
+        screen_refresh_rate: log.device_info?.screen_refresh_rate
+      },
+      training_context: {
+        module_id: log.training_context?.module_id,
+        module_type: log.training_context?.module_type,
+        timestamp_start: log.training_context?.timestamp_start ? new Date(log.training_context.timestamp_start).toISOString() : '',
+        timestamp_end: log.training_context?.timestamp_end ? new Date(log.training_context.timestamp_end).toISOString() : ''
+      },
+      performance_metrics: {
+        is_completed: log.performance_metrics?.is_completed,
+        total_active_seconds: log.performance_metrics?.total_active_seconds,
+        pause_count: log.performance_metrics?.pause_count,
+        exit_node: log.performance_metrics?.exit_node
+      },
+      objective_metrics: {
+        blink_count: log.objective_metrics?.blink_count,
+        blink_rate_per_min: log.objective_metrics?.blink_rate_per_min,
+        relaxation_achieved: log.objective_metrics?.relaxation_achieved
+      },
+      state_machine_details: log.state_machine_details || {},
+      created_at: log.created_at ? new Date(log.created_at).toISOString() : ''
     };
 
     const msgUint8 = new TextEncoder().encode(JSON.stringify(payloadForSignature) + AURA_SECRET_SALT);
@@ -42,6 +60,7 @@ async function verifyHMAC(log: any) {
     
     return expectedSignature === log.digital_signature;
   } catch (err) {
+    console.error('HMAC 驗證例外:', err);
     return false;
   }
 }
@@ -54,9 +73,8 @@ export default function ClinicDashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [stats, setStats] = useState({ total: 0, verified: 0, tampered: 0, totalSeconds: 0 });
 
-  // 更新後的診所端讀取邏輯
+  // 診所端讀取邏輯
   const handleLogin = () => {
-    // 假設醫師輸入的授權碼 (passcode) 就是診所的代號 (例如 'CLINIC_A')
     if (passcode.trim() !== '') {
       setIsAuthenticated(true);
       fetchLogs();
@@ -72,7 +90,7 @@ export default function ClinicDashboard() {
     const { data, error } = await supabase
       .from('training_logs')
       .select('*')
-      .eq('clinic_id', passcode.trim().toUpperCase()) // 👈 新增這行進行過濾
+      .eq('clinic_id', passcode.trim().toUpperCase())
       .order('created_at', { ascending: false })
       .limit(50);
 
@@ -204,7 +222,6 @@ export default function ClinicDashboard() {
                     const isValid = log.isSignatureValid;
                     const date = new Date(log.created_at).toLocaleString('zh-TW', { hour12: false });
                     
-                    // 核心修改點：優先顯示 real_name (LINE 暱稱)，沒有才退回顯示 UID
                     const displayName = log.real_name || (log.line_uid ? `${log.line_uid.substring(0, 6)}...` : '未知');
                     
                     const blinkRate = log.objective_metrics?.blink_rate_per_min || 0;

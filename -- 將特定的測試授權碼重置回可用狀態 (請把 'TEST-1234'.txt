@@ -1,0 +1,4 @@
+-- 將特定的測試授權碼重置回可用狀態 (請把 'TEST-1234' 換成您的授權碼)
+UPDATE public.activation_codes 
+SET status = 'AVAILABLE', used_by_line_uid = NULL 
+WHERE code = 'TEST-1234';

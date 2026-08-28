@@ -25,6 +25,7 @@ async function verifyHMAC(log: any) {
       previous_hash: log.previous_hash || 'GENESIS_HASH_00000000000000000000',
       line_uid: log.line_uid,
       auth_code: log.auth_code,
+      clinic_id: log.clinic_id,
       device_info: log.device_info,
       training_context: log.training_context,
       performance_metrics: log.performance_metrics,

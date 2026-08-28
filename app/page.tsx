@@ -181,19 +181,28 @@ export default function EyeComfortApp() {
     }
 
     try {
+      const targetCode = redeemCode.trim().toUpperCase();
+      console.log("正在查詢授權碼:", targetCode);
+
       const { data: codeData, error: codeError } = await supabase
         .from('activation_codes')
         .select('*')
-        .eq('code', redeemCode.trim().toUpperCase())
+        .eq('code', targetCode)
         .single();
 
-      if (codeError || !codeData) {
-        alert('❌ 無效的授權碼，請檢查實體卡片上的序號或聯絡診所。');
+      // 🔍 這裡做了修改：如果發生錯誤，會把真正的原因印在畫面上
+      if (codeError) {
+        alert(`❌ 資料庫查詢失敗。\n錯誤代碼: ${codeError.code}\n錯誤訊息: ${codeError.message}`);
+        return;
+      }
+
+      if (!codeData) {
+        alert('❌ 找不到此授權碼，請確認資料庫中是否有新增該筆資料。');
         return;
       }
 
       if (codeData.status !== 'ACTIVE' && codeData.status !== 'AVAILABLE') {
-        alert('❌ 此授權碼已失效或已被使用。');
+        alert(`❌ 此授權碼狀態異常 (${codeData.status})，已被使用或失效。`);
         return;
       }
 
@@ -219,9 +228,8 @@ export default function EyeComfortApp() {
 
       alert(`✅ 兌換成功！已解鎖由 [${codeData.clinic_id || '授權診所'}] 開立的數位護眼計畫。`);
       
-    } catch (err) {
-      console.error("驗證失敗", err);
-      alert('網路連線異常，請稍後再試。');
+    } catch (err: any) {
+      alert(`❌ 發生未預期例外錯誤: ${err.message || err}`);
     }
   };
 

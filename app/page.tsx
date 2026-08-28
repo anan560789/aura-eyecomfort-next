@@ -9,9 +9,10 @@ import { createClient } from '@supabase/supabase-js';
 import NoSleep from 'nosleep.js';
 
 // ==========================================
-// 1. 全域設定與 Supabase 初始化
+// 1. 全域設定與 Supabase 初始化 (網址已修正)
 // ==========================================
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vttxlkquladnrnytyhpc.supabase.co';
+// 👇 請將下方的文字，換成您那串 eyJ 開頭的完整金鑰！
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0dHhsa3F1bGFkbnJueXR5aHBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MTYyMzIsImV4cCI6MjEwMTk5MjIzMn0.l_wLaECh2kgDQtMzcrvJcjc5091x4HvSgfF4rPE1cHM';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
@@ -172,7 +173,7 @@ export default function EyeComfortApp() {
   }, []);
 
   // ==========================================
-  // 🏥 O2O 核心：動態授權碼驗證與診所綁定邏輯
+  // 🏥 O2O 核心：動態授權碼驗證與診所綁定邏輯 (已加上防呆警告)
   // ==========================================
   const handleRedeemCode = async () => {
     if (!redeemCode || redeemCode.trim() === '') {
@@ -190,7 +191,6 @@ export default function EyeComfortApp() {
         .eq('code', targetCode)
         .single();
 
-      // 🔍 這裡做了修改：如果發生錯誤，會把真正的原因印在畫面上
       if (codeError) {
         alert(`❌ 資料庫查詢失敗。\n錯誤代碼: ${codeError.code}\n錯誤訊息: ${codeError.message}`);
         return;
@@ -214,21 +214,34 @@ export default function EyeComfortApp() {
       setShowRedeemModal(false);
       
       if (lineProfile.uid !== '未登入') {
-         await supabase.from('patients_mapping').upsert({
+         // 寫入綁定資料並攔截錯誤
+         const { error: mapError } = await supabase.from('patients_mapping').upsert({
              line_uid: lineProfile.uid,
              clinic_id: codeData.clinic_id,
              activation_code: codeData.code,
              bound_at: new Date().toISOString()
          });
          
-         await supabase.from('activation_codes')
+         if (mapError) {
+             alert('❌ 寫入病患綁定表失敗 (patients_mapping)：\n' + mapError.message);
+             return;
+         }
+         
+         // 更新序號狀態並攔截錯誤
+         const { error: updateError } = await supabase.from('activation_codes')
              .update({ status: 'USED', used_by_line_uid: lineProfile.uid })
              .eq('code', codeData.code);
+             
+         if (updateError) {
+             alert('❌ 更新序號狀態失敗 (activation_codes)：\n' + updateError.message);
+             return;
+         }
       }
 
       alert(`✅ 兌換成功！已解鎖由 [${codeData.clinic_id || '授權診所'}] 開立的數位護眼計畫。`);
       
     } catch (err: any) {
+      console.error("驗證發生未預期例外", err);
       alert(`❌ 發生未預期例外錯誤: ${err.message || err}`);
     }
   };
@@ -632,6 +645,7 @@ export default function EyeComfortApp() {
     return 'Web';
   };
 
+  // 🏥 訓練紀錄寫入邏輯 (已加上防呆警告)
   const logTraining = async (moduleName: string, durationSec: number) => { 
     if (!lineProfile.uid || lineProfile.uid === '未登入') return; 
   
@@ -657,7 +671,6 @@ export default function EyeComfortApp() {
     const blinkRate = (gameState.current.blinkCount / (durationSec || 1)) * 60;
     const isRelaxed = blinkRate >= 12;
 
-    // 🏥 帶入該病患綁定的診所代碼與授權碼
     const clinicId = localStorage.getItem('aura_clinic_id') || 'UNKNOWN';
     const authCode = localStorage.getItem('aura_activation_code') || "FREE-TIER";
 
@@ -667,7 +680,7 @@ export default function EyeComfortApp() {
       previous_hash: previousHash,
       line_uid: lineProfile.uid,
       auth_code: authCode,
-      clinic_id: clinicId, // 確保資料庫寫入這項屬性，供診所後台分流用
+      clinic_id: clinicId,
       device_info: {
         os_platform: getDevicePlatform(),
         screen_refresh_rate: 60
@@ -700,8 +713,14 @@ export default function EyeComfortApp() {
 
     try { 
       const { error } = await supabase.from('training_logs').insert([logData]); 
-      if (error) throw error;
-    } catch (err) {
+      
+      // 如果資料庫回報錯誤，直接跳出視窗！
+      if (error) {
+         alert('❌ 寫入訓練紀錄失敗 (training_logs)：\n' + error.message);
+         throw error;
+      }
+    } catch (err: any) {
+      alert('❌ 紀錄上傳被拒絕：\n' + (err.message || '格式不符'));
       console.warn("⚠️ 網路異常，已將受簽章保護的時序鏈結紀錄暫存至邊緣端 LocalStorage");
       const offlineKey = 'aura_offline_logs';
       const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');

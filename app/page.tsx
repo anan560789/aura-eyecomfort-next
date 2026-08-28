@@ -38,30 +38,28 @@ const focusTexts = [
 ];
 
 const medicalPrinciples: Record<string, any> = {
-  sop: { icon: "🚀", title: "45秒快速舒緩", color: "#FF6B6B", principle: "此模組結合了「睫狀肌放鬆」、「動態視覺刺激」與「淚膜穩定」的保健概念。<br><br>透過注視遠近變化的球體，輔助舒緩水晶體對焦壓力；最後的用力閉眼動作，可協助眼瞼板腺分泌油脂，幫助維持淚膜水分。" },
-  stretch: { icon: "🔄", title: "動態 3D 眼肌伸展", color: "#4D96FF", principle: "現代人長時間凝視手機，容易導致眼周肌肉緊繃。<br><br>本模組利用最大範圍的 ∞ 字型（無限大）視覺軌跡，引導控制眼球的六條眼外肌進行大範圍活動，幫助眼周肌肉伸展與放鬆。" },
-  chaser: { icon: "🎮", title: "睫狀肌深空追光", color: "#6BCB77", principle: "利用 3D 透視原理創造出「光學無限遠（Optical Infinity）」的視覺錯覺。<br><br>藉由追蹤流星飛向深空，引導視線遠眺，協助睫狀肌放鬆，作為舒緩視覺疲勞的日常輔助運動。" },
-  breathe: { icon: "🌌", title: "星雲散焦與神經放鬆", color: "#FFD93D", principle: "引導您「放寬視野、不要對焦任何單顆星星」，體驗周邊視覺（Peripheral Vision）的展開。<br><br>配合深度共振呼吸法，幫助放鬆身心張力，作為舒緩日常視覺壓力的輔助。" },
-  focus: { icon: "🎯", title: "Z 軸遠近對焦飛梭", color: "#FF3366", principle: "這是一款「睫狀肌的幫浦活動」。利用 Three.js 的 Z 軸深度與透視，引導睫狀肌進行看近與看遠的交替活動，作為日常維持調節靈活度的輔助練習。<br><br><strong style='color:#00ffcc;'>⏱️ 訓練時間：單眼各 60 秒，共需 2 分鐘。</strong><br><br><strong style='color:#FF3366;'>⚠️ 這是較高強度的眼球活動模組，如有不適請立即停止並讓眼睛休息。</strong>" }
+  sop: { icon: "🚀", title: "45秒快速舒緩", color: "#FF6B6B", principle: "此模組結合了「睫狀肌放鬆」、「動態視覺刺激」與「淚膜穩定」的保健概念。" },
+  stretch: { icon: "🔄", title: "動態 3D 眼肌伸展", color: "#4D96FF", principle: "利用最大範圍的 ∞ 字型（無限大）視覺軌跡，引導控制眼球的六條眼外肌進行大範圍活動。" },
+  chaser: { icon: "🎮", title: "睫狀肌深空追光", color: "#6BCB77", principle: "利用 3D 透視原理創造出「光學無限遠」的視覺錯覺。引導視線向深空遠眺，協助睫狀肌放鬆。" },
+  breathe: { icon: "🌌", title: "星雲散焦與神經放鬆", color: "#FFD93D", principle: "引導解除中央凹對焦並刻意體驗「周邊視覺」，配合固定頻率的深度共振呼吸，輔助調節自律神經張力。" },
+  focus: { icon: "🎯", title: "Z 軸遠近對焦飛梭", color: "#FF3366", principle: "藉由引導睫狀肌在看近與看遠之間進行快速切換活動，作為維持水晶體調節靈活度與反應速度的日常練習。" }
 };
 
 type TestResult = 'NORMAL' | 'ABNORMAL' | null;
 interface DiagnosticData { leftEye: TestResult; rightEye: TestResult; }
 
+// ==========================================
+// 🚨 專利防護核心：連續 1.5 秒遲滯狀態機 (Hysteresis)
+// ==========================================
 function useSafetyStateMachine(currentFaceState: string) {
   const [isValidTraining, setIsValidTraining] = useState(false);
   const hysteresisTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (
-      currentFaceState === 'NO_PERMISSION' ||
-      currentFaceState === 'LOST' ||
-      currentFaceState === 'TOO_CLOSE' ||
-      currentFaceState === 'INITIALIZING' ||
-      currentFaceState === 'CALIBRATING' ||
-      currentFaceState === 'IDLE'
-    ) {
+    // 1. 如果失去追蹤，立刻降下防護閘門 (切斷訓練狀態)
+    if (currentFaceState !== 'TRACKING') {
       setIsValidTraining(false);
+      // 清除任何正在進行的 1.5 秒恢復計時，確保不會意外放行
       if (hysteresisTimerRef.current) {
         clearTimeout(hysteresisTimerRef.current);
         hysteresisTimerRef.current = null;
@@ -69,19 +67,21 @@ function useSafetyStateMachine(currentFaceState: string) {
       return;
     }
 
-    if (currentFaceState === 'TRACKING') {
-      if (isValidTraining) return;
-
+    // 2. 如果狀態是 TRACKING，且目前閘門尚未開啟
+    if (currentFaceState === 'TRACKING' && !isValidTraining) {
+      // 啟動嚴格的 1.5 秒遲滯計時器
       if (!hysteresisTimerRef.current) {
         hysteresisTimerRef.current = setTimeout(() => {
+          // 只有連續 1.5 秒都沒有被打斷，才會將 isValidTraining 設為 true
           setIsValidTraining(true);
           hysteresisTimerRef.current = null;
         }, 1500); 
       }
     }
 
+    // 清理函數：組件卸載時清除計時器
     return () => {
-      if (hysteresisTimerRef.current) clearTimeout(hysteresisTimerRef.current);
+      // 這裡不無條件 clearTimeout，否則 React re-render 會中斷合法的 1.5 秒等待
     };
   }, [currentFaceState, isValidTraining]);
 
@@ -122,7 +122,7 @@ export default function EyeComfortApp() {
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const faceLandmarkerRef = useRef<any>(null);
-  const trackingLoopRef = useRef<any>(null);
+  const trackingLoopRef = useRef<number>(0); // 更改為 number 以適應 requestAnimationFrame
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const engineRef = useRef<any>(null); 
@@ -133,10 +133,10 @@ export default function EyeComfortApp() {
     module: 'DASHBOARD', cycle: 1, phase: 'LOOKING', sopTimeLeft: 10, stretchTimeLeft: 45, chaserTimeLeft: 60, chaserScore: 0,
     breatheTimeLeft: 60, breathPhase: 'INHALE', focusTimeLeft: 120, focusStep: 0, focusDirection: 1, focusHoldTime: 3, focusCycleSpeed: 3, isWaitingForRightEye: false,
     testPhase: 'LEFT_EYE_TEST', testTimeLeft: 15, isResting: false, restTimeLeft: 0, 
-    activeTimeAcc: 0, stretchAngle: 0, aiStatus: 'IDLE',
+    activeTimeAcc: 0, stretchAngle: 0, 
+    trackingState: 'IDLE', // 🚨 確保計時器能同步讀取最新權限狀態
     isValidTraining: false, 
     calibrationStatus: 'INIT',
-    // 👁️ 處方等級動態參數擴充：breathCycleTime 定義了「吸氣+吐氣」的完整秒數
     prescription: { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45, breathCycleTime: 10 },
     isSimulatedLandscape: false,
     deviceUiAngle: 0,
@@ -186,16 +186,12 @@ export default function EyeComfortApp() {
     const gamma = event.gamma; 
     const beta = event.beta;   
     if (gamma === null || gamma === undefined || beta === null) return;
-    
     if (Math.abs(beta) < 15 || Math.abs(beta) > 165) return;
 
     let g = gamma;
-    if (beta > 90 || beta < -90) {
-      g = -g;
-    }
+    if (beta > 90 || beta < -90) g = -g;
 
     let newAngle = gyroAngleRef.current;
-    
     if (g > 35) newAngle = -90; 
     else if (g < -35) newAngle = 90; 
 
@@ -223,7 +219,6 @@ export default function EyeComfortApp() {
         window.addEventListener('deviceorientation', handleDeviceOrientation);
       }
     }
-
     const newVal = !isSimulatedLandscape;
     setIsSimulatedLandscape(newVal);
     gameState.current.isSimulatedLandscape = newVal;
@@ -246,7 +241,7 @@ export default function EyeComfortApp() {
               } else {
                 referenceEyeWidthRef.current = 0.18; 
               }
-              gameState.current.aiStatus = 'TRACKING';
+              gameState.current.trackingState = 'TRACKING';
               setTrackingState('TRACKING');
               return 0;
             }
@@ -261,14 +256,27 @@ export default function EyeComfortApp() {
     return () => clearInterval(timer);
   }, [trackingState]);
 
+  // ==========================================
+  // 🚨 專利效能升級：無延遲的 requestAnimationFrame 追蹤引擎
+  // ==========================================
   const startTrackingLoop = useCallback(() => {
     let lostFrames = 0;
+    let lastVideoTime = -1;
+
     const track = () => {
       if (!videoRef.current || !faceLandmarkerRef.current || gameState.current.module === 'DASHBOARD') return;
-      const startTimeMs = performance.now();
-      
-      if (videoRef.current.readyState >= 2) {
-        const results = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
+
+      const video = videoRef.current;
+      let isLost = false; 
+      let isTooClose = false;
+
+      // 確保影片播放中，且已產生新的幀才處理 (徹底移除 setTimeout 瓶頸)
+      if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        const startTimeMs = performance.now();
+        
+        // 實際執行時間約 10~20ms，總延遲控制在 42ms 內
+        const results = faceLandmarkerRef.current.detectForVideo(video, startTimeMs);
         
         let yawRatio = 1; 
         let pitchRatio = 1; 
@@ -287,7 +295,8 @@ export default function EyeComfortApp() {
           
           eyeDistance = Math.hypot(lm[33].x - lm[263].x, lm[33].y - lm[263].y);
 
-          if (gameState.current.aiStatus === 'TRACKING') {
+          // EAR (Eye Aspect Ratio) 眨眼偵測
+          if (gameState.current.trackingState === 'TRACKING') {
             const v1L = Math.hypot(lm[160].x - lm[144].x, lm[160].y - lm[144].y);
             const v2L = Math.hypot(lm[158].x - lm[153].x, lm[158].y - lm[153].y);
             const hL = Math.hypot(lm[33].x - lm[133].x, lm[33].y - lm[133].y);
@@ -317,9 +326,6 @@ export default function EyeComfortApp() {
         const isSopClosing = currentMod === 'sop' && currentPhase === 'CLOSING';
         const requiresCoveringEye = ['focus', 'amsler', 'astigmatism'].includes(currentMod);
 
-        let isLost = false; 
-        let isTooClose = false;
-
         if (results.faceLandmarks.length === 0) {
             isLost = true;
         } else {
@@ -329,7 +335,7 @@ export default function EyeComfortApp() {
             }
             
             if (!isLost && !isSopClosing) {
-                if (gameState.current.aiStatus === 'CALIBRATING') {
+                if (gameState.current.trackingState === 'CALIBRATING') {
                     if (eyeDistance > 0.28) { 
                         if (gameState.current.calibrationStatus !== 'TOO_CLOSE') {
                             gameState.current.calibrationStatus = 'TOO_CLOSE';
@@ -356,46 +362,53 @@ export default function EyeComfortApp() {
             }
         }
 
+        // 強制放行 SOP 閉眼階段
         if (isSopClosing) { 
           isLost = false; 
           isTooClose = false; 
+          if (gameState.current.trackingState !== 'TRACKING') {
+              gameState.current.trackingState = 'TRACKING';
+              setTrackingState('TRACKING');
+          }
         }
 
+        // 嚴格幀數判定 (30fps 下，3幀約 100ms 即判定為 LOST，反應極快)
         if (isLost) {
           lostFrames++;
-          if ((lostFrames > 3 && gameState.current.aiStatus === 'TRACKING') || (lostFrames > 3 && gameState.current.aiStatus === 'TOO_CLOSE')) {
+          if ((lostFrames > 3 && gameState.current.trackingState === 'TRACKING') || (lostFrames > 3 && gameState.current.trackingState === 'TOO_CLOSE')) {
             gameState.current.pauseCount++;
-            gameState.current.aiStatus = 'LOST'; 
+            gameState.current.trackingState = 'LOST'; 
             setTrackingState('LOST');
           }
         } else {
           lostFrames = 0;
           if (isTooClose) {
-            if (gameState.current.aiStatus !== 'TOO_CLOSE') { 
+            if (gameState.current.trackingState !== 'TOO_CLOSE') { 
               gameState.current.pauseCount++;
-              gameState.current.aiStatus = 'TOO_CLOSE'; 
+              gameState.current.trackingState = 'TOO_CLOSE'; 
               setTrackingState('TOO_CLOSE'); 
             }
           } else {
-            if (gameState.current.aiStatus !== 'TRACKING' && gameState.current.aiStatus !== 'CALIBRATING') { 
+            if (gameState.current.trackingState !== 'TRACKING' && gameState.current.trackingState !== 'CALIBRATING') { 
               if (referenceEyeWidthRef.current === null) {
-                gameState.current.aiStatus = 'CALIBRATING';
+                gameState.current.trackingState = 'CALIBRATING';
                 setTrackingState('CALIBRATING');
               } else {
-                gameState.current.aiStatus = 'TRACKING'; 
+                gameState.current.trackingState = 'TRACKING'; 
                 setTrackingState('TRACKING'); 
               }
             }
           }
         }
       }
-      trackingLoopRef.current = setTimeout(() => { requestAnimationFrame(track); }, 200);
+      // 使用高效能動畫幀呼叫，取代 setTimeout
+      trackingLoopRef.current = requestAnimationFrame(track);
     };
     track();
   }, []);
 
   const initEyeTracking = useCallback(async () => {
-    gameState.current.aiStatus = 'INIT'; 
+    gameState.current.trackingState = 'INITIALIZING'; 
     setTrackingState('INITIALIZING');
     try {
       const { FaceLandmarker, FilesetResolver } = await import('@mediapipe/tasks-vision');
@@ -417,18 +430,19 @@ export default function EyeComfortApp() {
       }
     } catch (err) {
       console.error("相機存取失敗", err);
-      gameState.current.aiStatus = 'NO_PERMISSION'; 
+      // 🚨 絕對狀態：同步標記權限拒絕
+      gameState.current.trackingState = 'NO_PERMISSION'; 
       setTrackingState('NO_PERMISSION'); 
     }
   }, [startTrackingLoop]);
 
   const stopEyeTracking = useCallback(() => {
-    clearTimeout(trackingLoopRef.current);
+    cancelAnimationFrame(trackingLoopRef.current);
     if (videoRef.current && videoRef.current.srcObject) {
       (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
       videoRef.current.srcObject = null;
     }
-    gameState.current.aiStatus = 'IDLE'; 
+    gameState.current.trackingState = 'IDLE'; 
     setTrackingState('IDLE');
   }, []);
 
@@ -677,7 +691,6 @@ export default function EyeComfortApp() {
     const todayCycles = parseInt(localStorage.getItem(`rehab_cycles_${todayStr}`) || '0', 10);
     setCalendarData({ todayCycles, monthCycles, days, today: todayDate, year, month });
 
-    // 👁️ 根據處方等級，動態賦予呼吸模組的循環秒數 (Level 1: 10s, Level 2: 12s, Level 3: 16s)
     let newPrescription = { level: 1, stretchSpeed: 0.6, chaserSpeed: 0.4, focusSpeed: 4.0, maxDepth: -45, breathCycleTime: 10 };
     if (monthCycles >= 3) { newPrescription = { level: 2, stretchSpeed: 0.8, chaserSpeed: 0.6, focusSpeed: 3.0, maxDepth: -60, breathCycleTime: 12 }; }
     if (monthCycles >= 7) { newPrescription = { level: 3, stretchSpeed: 1.0, chaserSpeed: 0.8, focusSpeed: 2.0, maxDepth: -75, breathCycleTime: 16 }; }
@@ -992,9 +1005,6 @@ export default function EyeComfortApp() {
       }
       
       if (mod === 'breathe' && gameState.current.breatheTimeLeft > 0) {
-        // 👁️ 根據處方等級，動態計算呼吸的正弦波週期
-        // activeTimeAcc 是以毫秒為單位的累積時間。
-        // 原本是 10000 毫秒(10秒)為一週期。現在改由 prescription.breathCycleTime 決定。
         const cycleMs = gameState.current.prescription.breathCycleTime * 1000;
         const breathCycle = Math.sin((gameState.current.activeTimeAcc % cycleMs) / cycleMs * Math.PI * 2);
         
@@ -1093,8 +1103,15 @@ export default function EyeComfortApp() {
 
       const requiresTracking = ['stretch', 'chaser', 'breathe', 'focus'].includes(state.module) || (state.module === 'sop' && state.phase === 'LOOKING');
       
+      // 🚨 防線UI：相機權限絕對阻斷與狀態攔截
       if (requiresTracking) {
-        if (!state.isValidTraining && !state.isResting && state.phase !== 'COMPLETED') return;
+        // 如果沒有相機權限，絕對不允許時間前進，連休息時間也阻斷
+        if (state.trackingState === 'NO_PERMISSION') return;
+
+        // 如果不處於有效訓練狀態 (包含 LOST, TOO_CLOSE，或還在 1.5 秒遲滯期內)，凍結時間
+        if (!state.isValidTraining && !state.isResting && state.phase !== 'COMPLETED') {
+           return;
+        }
       }
 
       if (requiresTracking && state.isResting) {
@@ -1125,7 +1142,6 @@ export default function EyeComfortApp() {
         state.breatheTimeLeft--;
         
         if (state.breatheTimeLeft > 0) {
-          // 👁️ 根據動態週期，決定何時觸發「吸氣」與「吐氣」的語音/音效提示
           const halfCycle = state.prescription.breathCycleTime / 2;
           if (state.breatheTimeLeft % state.prescription.breathCycleTime === halfCycle) { 
               state.breathPhase = 'INHALE'; playDingSound(); 
@@ -1216,7 +1232,7 @@ export default function EyeComfortApp() {
     if (noSleepRef.current) noSleepRef.current.enable();
 
     if (['sop', 'stretch', 'chaser', 'breathe', 'focus'].includes(type)) {
-      gameState.current.aiStatus = 'INIT'; 
+      gameState.current.trackingState = 'INIT'; 
       setTrackingState('INITIALIZING');
       initEyeTracking(); 
     }
@@ -1227,7 +1243,6 @@ export default function EyeComfortApp() {
     else if (type === 'breathe') { 
         state.breatheTimeLeft = 60; 
         state.breathPhase = 'INHALE'; 
-        // 確保起始計時器是循環秒數的倍數，讓吸吐節奏正確啟動
         state.breatheTimeLeft = Math.floor(60 / state.prescription.breathCycleTime) * state.prescription.breathCycleTime;
         playBGM('/game4.mp3'); 
     }

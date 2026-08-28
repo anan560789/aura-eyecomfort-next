@@ -6,8 +6,8 @@ import { createClient } from '@supabase/supabase-js';
 // ==========================================
 // 1. Supabase 連線設定
 // ==========================================
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://bowzkrdxjfxwuxkvvlnh.supabase.co';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_JyPNp0UKUlSeNKMM-okN4Q_TAHuCSMT';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vttxlkquladnrnytyhpc.supabase.co';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_PsbpDEoQPbZCOhBrbshhlw_pievVO_-';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ==========================================

@@ -11,8 +11,8 @@ import NoSleep from 'nosleep.js';
 // ==========================================
 // 1. 全域設定與 Supabase 初始化
 // ==========================================
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://bowzkrdxjfxwuxkvvlnh.supabase.co';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_JyPNp0UKUlSeNKMM-okN4Q_TAHuCSMT';
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vttxlkquladnrnytyhpc.supabase.co';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'sb_publishable_PsbpDEoQPbZCOhBrbshhlw_pievVO_-';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // ==========================================
@@ -1398,7 +1398,7 @@ export default function EyeComfortApp() {
               {!isPremiumUnlocked && (
                 <div className="w-full bg-[#2a1f1a] border-2 border-[#ff4d4d] rounded-xl p-5 mb-5 shadow-[0_0_15px_rgba(255,77,77,0.2)] flex flex-col items-center">
                   <h3 className="text-[#ff4d4d] text-[20px] font-bold mb-2">🔒 啟動完整醫療級復健療程</h3>
-                  <p className="text-[#d1b0b0] text-[15px] text-center mb-4">請輸入診所開立之 30 天數位護眼計畫授權碼，解鎖全套模組。</p>
+                  <p className="text-[#d1b0b0] text-[15px] text-center mb-4">請輸入診所配發之授權碼，解鎖專屬您的護眼計畫。</p>
                   <button onClick={() => setShowRedeemModal(true)} className="px-6 py-3 bg-[#ff4d4d] text-white font-bold rounded-full w-full max-w-[300px]">🎟️ 輸入處方授權碼</button>
                 </div>
               )}
@@ -1748,10 +1748,10 @@ export default function EyeComfortApp() {
           <div className="absolute inset-0 z-[100] bg-black/80 flex items-center justify-center p-5 backdrop-blur-sm">
             <div className="bg-[#1a2233] border-2 border-[#00ffcc] p-6 rounded-2xl w-full max-w-[400px] shadow-[0_0_25px_rgba(0,255,204,0.3)] text-center">
               <h3 className="text-[#fffdd0] text-[22px] font-bold mb-3">🎟️ 輸入數位處方授權碼</h3>
-              <p className="text-[#8b9bb4] text-[14px] mb-4">請輸入診所配發之 12 碼專屬序號 (測試碼: EYE-A8F2-99B1)</p>
+              <p className="text-[#8b9bb4] text-[14px] mb-4">請輸入診所配發之專屬序號 (測試碼: TEST-1234)</p>
               <input 
                 type="text" 
-                placeholder="例如: EYE-XXXX-XXXX" 
+                placeholder="例如: TEST-1234" 
                 value={redeemCode}
                 onChange={(e) => setRedeemCode(e.target.value)}
                 className="w-full p-3 bg-[#0f141e] border border-[#2a3a5a] text-[#fffdd0] rounded-xl text-center text-[18px] mb-5 outline-none focus:border-[#00ffcc]"

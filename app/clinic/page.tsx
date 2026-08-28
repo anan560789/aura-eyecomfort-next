@@ -18,11 +18,11 @@ const AURA_SECRET_SALT = "AuraDTx_Patent_2026_Strict_Compliance_O2O";
 // 在後台重新計算一次 Hash，與資料庫存的 digital_signature 比對
 async function verifyHMAC(log: any) {
   try {
-    // 必須與 App 端生成簽章時的資料結構一模一樣
+    // 嚴格對齊前端 App 的 12 個欄位順序與結構
     const payloadForSignature = {
       session_id: log.session_id,
-      sequence_id: log.sequence_id || 0,
-      previous_hash: log.previous_hash || 'GENESIS_HASH_00000000000000000000',
+      sequence_id: log.sequence_id,
+      previous_hash: log.previous_hash,
       line_uid: log.line_uid,
       auth_code: log.auth_code,
       clinic_id: log.clinic_id,
@@ -34,6 +34,7 @@ async function verifyHMAC(log: any) {
       created_at: log.created_at
     };
 
+    const AURA_SECRET_SALT = "AuraDTx_Patent_2026_Strict_Compliance_O2O";
     const msgUint8 = new TextEncoder().encode(JSON.stringify(payloadForSignature) + AURA_SECRET_SALT);
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));

@@ -219,7 +219,7 @@ export default function EyeComfortApp() {
              line_uid: lineProfile.uid,
              clinic_id: codeData.clinic_id,
              activation_code: codeData.code,
-             real_name: lineProfile.name,
+             real_name: lineProfile.name, // 👈 確認：包含使用者的 LINE 暱稱
              bound_at: new Date().toISOString()
          });
          
@@ -646,7 +646,7 @@ export default function EyeComfortApp() {
     return 'Web';
   };
 
-  // 🏥 訓練紀錄寫入邏輯 (已加上防呆警告)
+  // 🏥 訓練紀錄寫入邏輯 (已加上防呆警告與完整簽章欄位)
   const logTraining = async (moduleName: string, durationSec: number) => { 
     if (!lineProfile.uid || lineProfile.uid === '未登入') return; 
   
@@ -682,6 +682,7 @@ export default function EyeComfortApp() {
       line_uid: lineProfile.uid,
       auth_code: authCode,
       clinic_id: clinicId,
+      real_name: lineProfile.name, // 👈 核心修改點：加入 LINE 暱稱以對齊診所端 HMAC
       device_info: {
         os_platform: getDevicePlatform(),
         screen_refresh_rate: 60

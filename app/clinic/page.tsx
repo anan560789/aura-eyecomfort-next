@@ -26,6 +26,7 @@ async function verifyHMAC(log: any) {
       line_uid: log.line_uid,
       auth_code: log.auth_code,
       clinic_id: log.clinic_id,
+      real_name: log.real_name,
       device_info: log.device_info,
       training_context: log.training_context,
       performance_metrics: log.performance_metrics,
@@ -34,7 +35,6 @@ async function verifyHMAC(log: any) {
       created_at: log.created_at
     };
 
-    const AURA_SECRET_SALT = "AuraDTx_Patent_2026_Strict_Compliance_O2O";
     const msgUint8 = new TextEncoder().encode(JSON.stringify(payloadForSignature) + AURA_SECRET_SALT);
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -179,7 +179,7 @@ export default function ClinicDashboard() {
                 <tr className="bg-[#161b22] text-[#8b9bb4] text-[14px] uppercase tracking-wider">
                   <th className="p-4 border-b border-[#2a3a5a]">資料完整性</th>
                   <th className="p-4 border-b border-[#2a3a5a]">完成時間</th>
-                  <th className="p-4 border-b border-[#2a3a5a]">病患 UID (部分)</th>
+                  <th className="p-4 border-b border-[#2a3a5a]">病患 LINE 暱稱</th>
                   <th className="p-4 border-b border-[#2a3a5a]">訓練模組</th>
                   <th className="p-4 border-b border-[#2a3a5a]">有效時長</th>
                   <th className="p-4 border-b border-[#2a3a5a]">平均眨眼率</th>
@@ -203,7 +203,10 @@ export default function ClinicDashboard() {
                   logs.map((log, index) => {
                     const isValid = log.isSignatureValid;
                     const date = new Date(log.created_at).toLocaleString('zh-TW', { hour12: false });
-                    const shortUid = log.line_uid ? log.line_uid.substring(0, 8) + '***' : '未知';
+                    
+                    // 核心修改點：優先顯示 real_name (LINE 暱稱)，沒有才退回顯示 UID
+                    const displayName = log.real_name || (log.line_uid ? `${log.line_uid.substring(0, 6)}...` : '未知');
+                    
                     const blinkRate = log.objective_metrics?.blink_rate_per_min || 0;
                     const isRelaxed = log.objective_metrics?.relaxation_achieved;
 
@@ -221,7 +224,7 @@ export default function ClinicDashboard() {
                           )}
                         </td>
                         <td className="p-4 font-mono text-[14px] text-[#a5b6cf]">{date}</td>
-                        <td className="p-4 font-mono text-[14px]">{shortUid}</td>
+                        <td className="p-4 font-bold text-[#00ffcc] text-[14px]">{displayName}</td>
                         <td className="p-4 font-bold text-[#E5B55E]">{log.training_context?.module_type || '未記錄'}</td>
                         <td className="p-4">
                           <span className={`font-mono ${!isValid ? 'text-[#ff4d4d] line-through' : 'text-white'}`}>

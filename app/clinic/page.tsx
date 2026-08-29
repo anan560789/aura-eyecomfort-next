@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
 // ==========================================
@@ -46,6 +46,7 @@ async function verifyHMAC(log: any) {
         blink_rate_per_min: log.objective_metrics?.blink_rate_per_min,
         relaxation_achieved: log.objective_metrics?.relaxation_achieved
       },
+      // 強制約束巢狀物件順序，對抗 JSONB 自動排序
       state_machine_details: (log.state_machine_details && Object.keys(log.state_machine_details).length > 0) ? {
         phase_1_left_eye: {
           target_seconds: log.state_machine_details.phase_1_left_eye?.target_seconds,
@@ -63,7 +64,6 @@ async function verifyHMAC(log: any) {
           is_completed: log.state_machine_details.phase_2_right_eye?.is_completed
         }
       } : {},
-      
       created_at: log.created_at ? new Date(log.created_at).toISOString() : ''
     };
 
@@ -87,12 +87,14 @@ export default function ClinicDashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [stats, setStats] = useState({ total: 0, verified: 0, tampered: 0, totalSeconds: 0 });
 
+  // 📅 新增：日期層級狀態
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+
   // 🧑‍⚕️ 病患專屬數據 Modal 狀態管理
   const [selectedPatient, setSelectedPatient] = useState<{ uid: string, name: string } | null>(null);
   const [patientLogs, setPatientLogs] = useState<any[]>([]);
   const [isPatientLoading, setIsPatientLoading] = useState(false);
 
-  // 診所端讀取邏輯
   const handleLogin = () => {
     if (passcode.trim() !== '') {
       setIsAuthenticated(true);
@@ -109,7 +111,7 @@ export default function ClinicDashboard() {
       .select('*')
       .eq('clinic_id', passcode.trim().toUpperCase())
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(200); // 加大拉取數量以涵蓋多天
 
     if (error) {
       console.error('獲取資料失敗', error);
@@ -139,6 +141,40 @@ export default function ClinicDashboard() {
     setIsLoading(false);
   };
 
+  // 📅 將紀錄依照日期分群
+  const groupedLogsByDate = useMemo(() => {
+    const groups = logs.reduce((acc, log) => {
+      const d = new Date(log.created_at);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      
+      if (!acc[dateStr]) acc[dateStr] = [];
+      acc[dateStr].push(log);
+      return acc;
+    }, {} as Record<string, any[]>);
+
+    return Object.keys(groups).map(date => {
+      const dayLogs = groups[date];
+      const tamperedCount = dayLogs.filter(l => !l.isSignatureValid).length;
+      const uniquePatients = new Set(dayLogs.map(l => l.line_uid)).size;
+      const totalSeconds = dayLogs.reduce((sum, l) => sum + (l.performance_metrics?.total_active_seconds || 0), 0);
+      
+      return {
+        date,
+        logs: dayLogs,
+        tamperedCount,
+        uniquePatients,
+        totalSeconds
+      };
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [logs]);
+
+  // 取得當前選定日期的詳細紀錄
+  const currentDayLogs = useMemo(() => {
+    if (!selectedDate) return [];
+    const group = groupedLogsByDate.find(g => g.date === selectedDate);
+    return group ? group.logs : [];
+  }, [selectedDate, groupedLogsByDate]);
+
   // 📊 開啟特定病患的詳細數據
   const openPatientDetails = async (uid: string, name: string) => {
     setSelectedPatient({ uid, name });
@@ -161,7 +197,6 @@ export default function ClinicDashboard() {
     setIsPatientLoading(false);
   };
 
-  // 關閉 Modal 並清空狀態
   const closePatientDetails = () => {
     setSelectedPatient(null);
     setPatientLogs([]);
@@ -185,7 +220,6 @@ export default function ClinicDashboard() {
           <button onClick={handleLogin} className="w-full py-4 bg-[#00ffcc] text-[#0f141e] font-bold rounded-xl text-[18px] shadow-[0_4px_15px_rgba(0,255,204,0.4)] transition-transform hover:scale-[1.02]">
             登入系統
           </button>
-          <p className="text-[#8b9bb4] text-[14px] mt-5">(測試密碼: AURA2026)</p>
         </div>
       </div>
     );
@@ -203,7 +237,7 @@ export default function ClinicDashboard() {
             </h1>
             <p className="text-[#8b9bb4] text-[16px] mt-2">O2O 數位療法閉環｜全診所即時動態中心</p>
           </div>
-          <button onClick={fetchLogs} className="mt-4 md:mt-0 px-6 py-3 bg-[#1a2233] border border-[#4D96FF] text-[#4D96FF] rounded-lg font-bold hover:bg-[#4D96FF] hover:text-white transition-colors flex items-center gap-2">
+          <button onClick={() => { setSelectedDate(null); fetchLogs(); }} className="mt-4 md:mt-0 px-6 py-3 bg-[#1a2233] border border-[#4D96FF] text-[#4D96FF] rounded-lg font-bold hover:bg-[#4D96FF] hover:text-white transition-colors flex items-center gap-2">
             <span>🔄</span> 重新載入區塊鏈結
           </button>
         </div>
@@ -228,104 +262,136 @@ export default function ClinicDashboard() {
           </div>
         </div>
 
-        {/* 總覽 Data Table */}
-        <div className="bg-[#1a2233] rounded-2xl border border-[#2a3a5a] overflow-hidden shadow-2xl">
-          <div className="p-5 border-b border-[#2a3a5a] bg-[#121824] flex justify-between items-center">
-            <h2 className="text-[20px] font-bold">📋 全診所近期訓練時序日誌 (點選查看病患詳情)</h2>
-            <span className="text-[#8b9bb4] text-[14px]">使用 SHA-256 HMAC 與時序雜湊鏈結保護</span>
+        {/* 視圖切換區塊 */}
+        {!selectedDate ? (
+          // ==========================================
+          // 第一層：以「日期」分群的總覽表
+          // ==========================================
+          <div className="bg-[#1a2233] rounded-2xl border border-[#2a3a5a] overflow-hidden shadow-2xl animate-fade-in">
+            <div className="p-5 border-b border-[#2a3a5a] bg-[#121824] flex justify-between items-center">
+              <h2 className="text-[20px] font-bold">📅 每日訓練總覽 (點選日期查看明細)</h2>
+              <span className="text-[#8b9bb4] text-[14px]">依照日期自動彙整</span>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-[#161b22] text-[#8b9bb4] text-[14px] uppercase tracking-wider">
+                    <th className="p-4 border-b border-[#2a3a5a]">訓練日期</th>
+                    <th className="p-4 border-b border-[#2a3a5a]">當日活躍病患數</th>
+                    <th className="p-4 border-b border-[#2a3a5a]">當日接收紀錄數</th>
+                    <th className="p-4 border-b border-[#2a3a5a]">當日總有效時長</th>
+                    <th className="p-4 border-b border-[#2a3a5a]">整體稽核狀態</th>
+                  </tr>
+                </thead>
+                <tbody className="text-[15px]">
+                  {isLoading ? (
+                    <tr><td colSpan={5} className="p-10 text-center text-[#8b9bb4] animate-pulse">資料安全解密中...</td></tr>
+                  ) : groupedLogsByDate.length === 0 ? (
+                    <tr><td colSpan={5} className="p-10 text-center text-[#8b9bb4]">目前沒有任何訓練紀錄</td></tr>
+                  ) : (
+                    groupedLogsByDate.map((group, index) => (
+                      <tr 
+                        key={index} 
+                        onClick={() => setSelectedDate(group.date)}
+                        className="hover:bg-[#2a3241] cursor-pointer transition-colors border-b border-[#2a3a5a]/50"
+                      >
+                        <td className="p-4 font-mono text-[16px] font-bold text-white">{group.date}</td>
+                        <td className="p-4 font-bold text-[#00ffcc]">{group.uniquePatients} 人</td>
+                        <td className="p-4 font-bold text-[#4D96FF]">{group.logs.length} 筆</td>
+                        <td className="p-4 font-bold text-[#E5B55E]">{Math.floor(group.totalSeconds / 60)} 分 {group.totalSeconds % 60} 秒</td>
+                        <td className="p-4">
+                          {group.tamperedCount === 0 ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#00ffcc]/10 text-[#00ffcc] rounded-full text-[13px] font-bold border border-[#00ffcc]/30">✅ 全數合規</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#ff4d4d]/10 text-[#ff4d4d] rounded-full text-[13px] font-bold border border-[#ff4d4d]/30">🚨 包含 {group.tamperedCount} 筆異常</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-          
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#161b22] text-[#8b9bb4] text-[14px] uppercase tracking-wider">
-                  <th className="p-4 border-b border-[#2a3a5a]">資料完整性</th>
-                  <th className="p-4 border-b border-[#2a3a5a]">完成時間</th>
-                  <th className="p-4 border-b border-[#2a3a5a]">病患 LINE 暱稱</th>
-                  <th className="p-4 border-b border-[#2a3a5a]">訓練模組</th>
-                  <th className="p-4 border-b border-[#2a3a5a]">有效時長</th>
-                  <th className="p-4 border-b border-[#2a3a5a]">處方/方案</th>
-                </tr>
-              </thead>
-              <tbody className="text-[15px]">
-                {isLoading ? (
-                  <tr>
-                    <td colSpan={6} className="p-10 text-center text-[#8b9bb4] animate-pulse">
-                      資料安全解密中...
-                    </td>
+        ) : (
+          // ==========================================
+          // 第二層：單一「日期」的詳細紀錄表
+          // ==========================================
+          <div className="bg-[#1a2233] rounded-2xl border border-[#2a3a5a] overflow-hidden shadow-2xl animate-fade-in">
+            <div className="p-5 border-b border-[#2a3a5a] bg-[#121824] flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div className="flex items-center gap-4">
+                <button 
+                  onClick={() => setSelectedDate(null)} 
+                  className="bg-[#2a3241] hover:bg-[#3a4556] text-white px-4 py-2 rounded-lg text-[14px] font-bold transition flex items-center gap-2"
+                >
+                  ⬅️ 返回日期列表
+                </button>
+                <h2 className="text-[20px] font-bold text-[#E5B55E]">📋 {selectedDate} 訓練時序日誌 (點選查看病患)</h2>
+              </div>
+              <span className="text-[#8b9bb4] text-[14px]">使用 SHA-256 HMAC 與時序雜湊鏈結保護</span>
+            </div>
+            
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="bg-[#161b22] text-[#8b9bb4] text-[14px] uppercase tracking-wider">
+                    <th className="p-4 border-b border-[#2a3a5a]">資料完整性</th>
+                    <th className="p-4 border-b border-[#2a3a5a]">完成時間</th>
+                    <th className="p-4 border-b border-[#2a3a5a]">病患 LINE 暱稱</th>
+                    <th className="p-4 border-b border-[#2a3a5a]">訓練模組</th>
+                    <th className="p-4 border-b border-[#2a3a5a]">有效時長</th>
+                    <th className="p-4 border-b border-[#2a3a5a]">處方/方案</th>
                   </tr>
-                ) : logs.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="p-10 text-center text-[#8b9bb4]">
-                      目前沒有任何訓練紀錄
-                    </td>
-                  </tr>
-                ) : (
-                  logs.map((log, index) => {
+                </thead>
+                <tbody className="text-[15px]">
+                  {currentDayLogs.map((log, index) => {
                     const isValid = log.isSignatureValid;
-                    const date = new Date(log.created_at).toLocaleString('zh-TW', { hour12: false });
+                    const timeOnly = new Date(log.created_at).toLocaleTimeString('zh-TW', { hour12: false });
                     const displayName = log.real_name || (log.line_uid ? `${log.line_uid.substring(0, 6)}...` : '未知');
 
                     return (
                       <tr 
                         key={log.id || index} 
-                        // 👈 新增：點擊行可以開啟特定病患數據，並加入游標變化與 hover 效果
                         onClick={() => openPatientDetails(log.line_uid, displayName)}
                         className={`hover:bg-[#2a3241] cursor-pointer transition-colors border-b border-[#2a3a5a]/50 ${!isValid ? 'bg-[#3a1a1a]/40' : ''}`}
                       >
                         <td className="p-4">
                           {isValid ? (
-                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#00ffcc]/10 text-[#00ffcc] rounded-full text-[13px] font-bold border border-[#00ffcc]/30">
-                              ✅ 簽章驗證通過
-                            </span>
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#00ffcc]/10 text-[#00ffcc] rounded-full text-[13px] font-bold border border-[#00ffcc]/30">✅ 簽章驗證通過</span>
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#ff4d4d]/10 text-[#ff4d4d] rounded-full text-[13px] font-bold border border-[#ff4d4d]/30">
-                              🚨 遭到竄改
-                            </span>
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#ff4d4d]/10 text-[#ff4d4d] rounded-full text-[13px] font-bold border border-[#ff4d4d]/30">🚨 遭到竄改</span>
                           )}
                         </td>
-                        <td className="p-4 font-mono text-[14px] text-[#a5b6cf]">{date}</td>
-                        <td className="p-4 font-bold text-[#00ffcc] text-[14px] flex items-center gap-2">
-                          👤 {displayName}
-                        </td>
+                        <td className="p-4 font-mono text-[15px] text-[#a5b6cf]">{timeOnly}</td>
+                        <td className="p-4 font-bold text-[#00ffcc] text-[15px] flex items-center gap-2">👤 {displayName}</td>
                         <td className="p-4 font-bold text-[#E5B55E]">{log.training_context?.module_type || '未記錄'}</td>
-                        <td className="p-4">
-                          <span className={`font-mono ${!isValid ? 'text-[#ff4d4d] line-through' : 'text-white'}`}>
-                            {log.performance_metrics?.total_active_seconds || 0} 秒
-                          </span>
-                        </td>
-                        <td className="p-4 text-[#8b9bb4]">
-                          {log.auth_code === 'FREE-TIER' ? '免費方案' : '🩺 處方授權'}
-                        </td>
+                        <td className="p-4"><span className={`font-mono ${!isValid ? 'text-[#ff4d4d] line-through' : 'text-white'}`}>{log.performance_metrics?.total_active_seconds || 0} 秒</span></td>
+                        <td className="p-4 text-[#8b9bb4]">{log.auth_code === 'FREE-TIER' ? '免費方案' : '🩺 處方授權'}</td>
                       </tr>
                     );
-                  })
-                )}
-              </tbody>
-            </table>
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      {/* 🧑‍⚕️ 新增：病患專屬數據 Modal 視窗 */}
+      {/* ==========================================
+          第三層：病患專屬數據 Modal 視窗 
+          ========================================== */}
       {selectedPatient && (
-        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 md:p-10 backdrop-blur-sm">
-          <div className="bg-[#0f141e] border border-[#00ffcc] rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-[0_0_30px_rgba(0,255,204,0.15)] overflow-hidden transform transition-all">
-            
-            {/* Modal Header */}
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 md:p-10 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#0f141e] border border-[#00ffcc] rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-[0_0_30px_rgba(0,255,204,0.15)] overflow-hidden">
             <div className="p-5 border-b border-[#2a3a5a] flex justify-between items-center bg-[#162b2b]">
               <div>
-                <h2 className="text-[24px] font-bold text-[#00ffcc] flex items-center gap-2">
-                  👤 {selectedPatient.name} 專屬病歷與依從性數據
-                </h2>
+                <h2 className="text-[24px] font-bold text-[#00ffcc] flex items-center gap-2">👤 {selectedPatient.name} 專屬病歷與依從性數據</h2>
                 <p className="text-[#8b9bb4] text-[14px] font-mono mt-1">UID: {selectedPatient.uid}</p>
               </div>
-              <button onClick={closePatientDetails} className="text-[#8b9bb4] hover:text-[#ff4d4d] transition-colors text-[32px] font-light leading-none">
-                &times;
-              </button>
+              <button onClick={closePatientDetails} className="text-[#8b9bb4] hover:text-[#ff4d4d] transition-colors text-[32px] font-light leading-none">&times;</button>
             </div>
 
-            {/* Modal Body */}
             <div className="p-5 overflow-y-auto flex-1 bg-[#0f141e]">
               {isPatientLoading ? (
                 <div className="flex flex-col items-center justify-center h-64">
@@ -334,7 +400,6 @@ export default function ClinicDashboard() {
                 </div>
               ) : (
                 <>
-                  {/* 個人數據統計卡片 */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                     <div className="bg-[#1a2233] p-5 rounded-xl border border-[#2a3a5a]">
                       <h3 className="text-[#8b9bb4] text-[14px] mb-1">歷史完成總次數</h3>
@@ -342,23 +407,16 @@ export default function ClinicDashboard() {
                     </div>
                     <div className="bg-[#1a2233] p-5 rounded-xl border border-[#2a3a5a]">
                       <h3 className="text-[#8b9bb4] text-[14px] mb-1">個人累積有效時長</h3>
-                      <p className="text-[28px] font-bold text-[#E5B55E]">
-                        {Math.floor(patientLogs.reduce((acc, l) => acc + (l.performance_metrics?.total_active_seconds || 0), 0) / 60)} 分鐘
-                      </p>
+                      <p className="text-[28px] font-bold text-[#E5B55E]">{Math.floor(patientLogs.reduce((acc, l) => acc + (l.performance_metrics?.total_active_seconds || 0), 0) / 60)} 分鐘</p>
                     </div>
                     <div className="bg-[#1a2233] p-5 rounded-xl border border-[#2a3a5a]">
                       <h3 className="text-[#8b9bb4] text-[14px] mb-1">歷史平均眨眼率</h3>
-                      <p className="text-[28px] font-bold text-[#4D96FF]">
-                        {patientLogs.length > 0 ? (patientLogs.reduce((acc, l) => acc + (l.objective_metrics?.blink_rate_per_min || 0), 0) / patientLogs.length).toFixed(1) : 0} 次/分
-                      </p>
+                      <p className="text-[28px] font-bold text-[#4D96FF]">{patientLogs.length > 0 ? (patientLogs.reduce((acc, l) => acc + (l.objective_metrics?.blink_rate_per_min || 0), 0) / patientLogs.length).toFixed(1) : 0} 次/分</p>
                     </div>
                   </div>
 
-                  {/* 個人訓練紀錄列表 */}
                   <div className="bg-[#1a2233] rounded-xl border border-[#2a3a5a] overflow-hidden">
-                    <div className="p-4 border-b border-[#2a3a5a] bg-[#121824]">
-                      <h3 className="font-bold text-[18px] text-[#fffdd0]">📄 歷史訓練軌跡</h3>
-                    </div>
+                    <div className="p-4 border-b border-[#2a3a5a] bg-[#121824]"><h3 className="font-bold text-[18px] text-[#fffdd0]">📄 歷史訓練軌跡</h3></div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-left border-collapse">
                         <thead>
@@ -372,31 +430,15 @@ export default function ClinicDashboard() {
                         </thead>
                         <tbody className="text-[14px]">
                           {patientLogs.length === 0 ? (
-                            <tr>
-                              <td colSpan={5} className="p-8 text-center text-[#8b9bb4]">沒有找到這名病患的紀錄</td>
-                            </tr>
+                            <tr><td colSpan={5} className="p-8 text-center text-[#8b9bb4]">沒有找到這名病患的紀錄</td></tr>
                           ) : (
                             patientLogs.map((log, idx) => (
                               <tr key={idx} className="hover:bg-[#2a3241] border-b border-[#2a3a5a]/50">
-                                <td className="p-3 font-mono text-[#a5b6cf]">
-                                  {new Date(log.created_at).toLocaleString('zh-TW', { hour12: false })}
-                                </td>
-                                <td className="p-3 font-bold text-[#E5B55E]">
-                                  {log.training_context?.module_type || '未記錄'}
-                                </td>
-                                <td className="p-3 font-mono text-white">
-                                  {log.performance_metrics?.total_active_seconds || 0} 秒
-                                </td>
-                                <td className="p-3 font-bold text-[#4D96FF]">
-                                  {log.objective_metrics?.blink_rate_per_min ? log.objective_metrics.blink_rate_per_min.toFixed(1) : 0} 次/分
-                                </td>
-                                <td className="p-3">
-                                  {log.isSignatureValid ? (
-                                    <span className="text-[#00ffcc] font-bold text-[12px]">✅ 通過</span>
-                                  ) : (
-                                    <span className="text-[#ff4d4d] font-bold text-[12px]">🚨 異常</span>
-                                  )}
-                                </td>
+                                <td className="p-3 font-mono text-[#a5b6cf]">{new Date(log.created_at).toLocaleString('zh-TW', { hour12: false })}</td>
+                                <td className="p-3 font-bold text-[#E5B55E]">{log.training_context?.module_type || '未記錄'}</td>
+                                <td className="p-3 font-mono text-white">{log.performance_metrics?.total_active_seconds || 0} 秒</td>
+                                <td className="p-3 font-bold text-[#4D96FF]">{log.objective_metrics?.blink_rate_per_min ? log.objective_metrics.blink_rate_per_min.toFixed(1) : 0} 次/分</td>
+                                <td className="p-3">{log.isSignatureValid ? <span className="text-[#00ffcc] font-bold text-[12px]">✅ 通過</span> : <span className="text-[#ff4d4d] font-bold text-[12px]">🚨 異常</span>}</td>
                               </tr>
                             ))
                           )}
@@ -408,11 +450,8 @@ export default function ClinicDashboard() {
               )}
             </div>
             
-            {/* Modal Footer */}
             <div className="p-4 border-t border-[#2a3a5a] bg-[#121824] flex justify-end">
-               <button onClick={closePatientDetails} className="px-6 py-2 bg-[#2a3241] hover:bg-[#3a4556] text-white rounded-lg font-bold transition-colors">
-                 關閉視窗
-               </button>
+               <button onClick={closePatientDetails} className="px-6 py-2 bg-[#2a3241] hover:bg-[#3a4556] text-white rounded-lg font-bold transition-colors">關閉視窗</button>
             </div>
           </div>
         </div>

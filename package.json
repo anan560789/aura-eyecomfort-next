@@ -13,6 +13,8 @@
     "@mediapipe/tasks-vision": "^1.0.1",
     "@supabase/supabase-js": "^2.112.2",
     "@types/three": "^0.185.4",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^4.2.1",
     "next": "16.3.0",
     "nosleep.js": "^0.12.0",
     "react": "19.2.8",

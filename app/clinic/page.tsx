@@ -46,7 +46,24 @@ async function verifyHMAC(log: any) {
         blink_rate_per_min: log.objective_metrics?.blink_rate_per_min,
         relaxation_achieved: log.objective_metrics?.relaxation_achieved
       },
-      state_machine_details: log.state_machine_details || {},
+      state_machine_details: (log.state_machine_details && Object.keys(log.state_machine_details).length > 0) ? {
+        phase_1_left_eye: {
+          target_seconds: log.state_machine_details.phase_1_left_eye?.target_seconds,
+          actual_seconds: log.state_machine_details.phase_1_left_eye?.actual_seconds,
+          is_completed: log.state_machine_details.phase_1_left_eye?.is_completed
+        },
+        transition_interrupt: {
+          triggered: log.state_machine_details.transition_interrupt?.triggered,
+          pause_duration_seconds: log.state_machine_details.transition_interrupt?.pause_duration_seconds,
+          user_resumed: log.state_machine_details.transition_interrupt?.user_resumed
+        },
+        phase_2_right_eye: {
+          target_seconds: log.state_machine_details.phase_2_right_eye?.target_seconds,
+          actual_seconds: log.state_machine_details.phase_2_right_eye?.actual_seconds,
+          is_completed: log.state_machine_details.phase_2_right_eye?.is_completed
+        }
+      } : {},
+      
       created_at: log.created_at ? new Date(log.created_at).toISOString() : ''
     };
 

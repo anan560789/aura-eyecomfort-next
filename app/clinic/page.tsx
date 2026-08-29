@@ -87,7 +87,7 @@ export default function ClinicDashboard() {
   const [isLoading, setIsLoading] = useState(false);
   const [stats, setStats] = useState({ total: 0, verified: 0, tampered: 0, totalSeconds: 0 });
 
-  // 📅 新增：日期層級狀態
+  // 📅 日期層級狀態
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   // 🧑‍⚕️ 病患專屬數據 Modal 狀態管理
@@ -111,7 +111,7 @@ export default function ClinicDashboard() {
       .select('*')
       .eq('clinic_id', passcode.trim().toUpperCase())
       .order('created_at', { ascending: false })
-      .limit(200); // 加大拉取數量以涵蓋多天
+      .limit(200);
 
     if (error) {
       console.error('獲取資料失敗', error);
@@ -124,7 +124,7 @@ export default function ClinicDashboard() {
       let tamperedCount = 0;
       let seconds = 0;
 
-      const verifiedData = await Promise.all(data.map(async (log) => {
+      const verifiedData = await Promise.all(data.map(async (log: any) => {
         const isValid = await verifyHMAC(log);
         if (isValid) {
             verifiedCount++;
@@ -141,22 +141,22 @@ export default function ClinicDashboard() {
     setIsLoading(false);
   };
 
-  // 📅 將紀錄依照日期分群
+  // 📅 將紀錄依照日期分群，並修正 TypeScript 型別錯誤
   const groupedLogsByDate = useMemo(() => {
-    const groups = logs.reduce((acc, log) => {
+    const groups = logs.reduce((acc: Record<string, any[]>, log: any) => {
       const d = new Date(log.created_at);
       const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       
       if (!acc[dateStr]) acc[dateStr] = [];
       acc[dateStr].push(log);
       return acc;
-    }, {} as Record<string, any[]>);
+    }, {});
 
     return Object.keys(groups).map(date => {
       const dayLogs = groups[date];
-      const tamperedCount = dayLogs.filter(l => !l.isSignatureValid).length;
-      const uniquePatients = new Set(dayLogs.map(l => l.line_uid)).size;
-      const totalSeconds = dayLogs.reduce((sum, l) => sum + (l.performance_metrics?.total_active_seconds || 0), 0);
+      const tamperedCount = dayLogs.filter((l: any) => !l.isSignatureValid).length;
+      const uniquePatients = new Set(dayLogs.map((l: any) => l.line_uid)).size;
+      const totalSeconds = dayLogs.reduce((sum: number, l: any) => sum + (l.performance_metrics?.total_active_seconds || 0), 0);
       
       return {
         date,
@@ -188,7 +188,7 @@ export default function ClinicDashboard() {
       .order('created_at', { ascending: false });
 
     if (data) {
-      const verifiedData = await Promise.all(data.map(async (log) => ({
+      const verifiedData = await Promise.all(data.map(async (log: any) => ({
         ...log,
         isSignatureValid: await verifyHMAC(log)
       })));
@@ -290,7 +290,7 @@ export default function ClinicDashboard() {
                   ) : groupedLogsByDate.length === 0 ? (
                     <tr><td colSpan={5} className="p-10 text-center text-[#8b9bb4]">目前沒有任何訓練紀錄</td></tr>
                   ) : (
-                    groupedLogsByDate.map((group, index) => (
+                    groupedLogsByDate.map((group: any, index: number) => (
                       <tr 
                         key={index} 
                         onClick={() => setSelectedDate(group.date)}
@@ -345,7 +345,7 @@ export default function ClinicDashboard() {
                   </tr>
                 </thead>
                 <tbody className="text-[15px]">
-                  {currentDayLogs.map((log, index) => {
+                  {currentDayLogs.map((log: any, index: number) => {
                     const isValid = log.isSignatureValid;
                     const timeOnly = new Date(log.created_at).toLocaleTimeString('zh-TW', { hour12: false });
                     const displayName = log.real_name || (log.line_uid ? `${log.line_uid.substring(0, 6)}...` : '未知');
@@ -407,11 +407,11 @@ export default function ClinicDashboard() {
                     </div>
                     <div className="bg-[#1a2233] p-5 rounded-xl border border-[#2a3a5a]">
                       <h3 className="text-[#8b9bb4] text-[14px] mb-1">個人累積有效時長</h3>
-                      <p className="text-[28px] font-bold text-[#E5B55E]">{Math.floor(patientLogs.reduce((acc, l) => acc + (l.performance_metrics?.total_active_seconds || 0), 0) / 60)} 分鐘</p>
+                      <p className="text-[28px] font-bold text-[#E5B55E]">{Math.floor(patientLogs.reduce((acc: number, l: any) => acc + (l.performance_metrics?.total_active_seconds || 0), 0) / 60)} 分鐘</p>
                     </div>
                     <div className="bg-[#1a2233] p-5 rounded-xl border border-[#2a3a5a]">
                       <h3 className="text-[#8b9bb4] text-[14px] mb-1">歷史平均眨眼率</h3>
-                      <p className="text-[28px] font-bold text-[#4D96FF]">{patientLogs.length > 0 ? (patientLogs.reduce((acc, l) => acc + (l.objective_metrics?.blink_rate_per_min || 0), 0) / patientLogs.length).toFixed(1) : 0} 次/分</p>
+                      <p className="text-[28px] font-bold text-[#4D96FF]">{patientLogs.length > 0 ? (patientLogs.reduce((acc: number, l: any) => acc + (l.objective_metrics?.blink_rate_per_min || 0), 0) / patientLogs.length).toFixed(1) : 0} 次/分</p>
                     </div>
                   </div>
 
@@ -432,7 +432,7 @@ export default function ClinicDashboard() {
                           {patientLogs.length === 0 ? (
                             <tr><td colSpan={5} className="p-8 text-center text-[#8b9bb4]">沒有找到這名病患的紀錄</td></tr>
                           ) : (
-                            patientLogs.map((log, idx) => (
+                            patientLogs.map((log: any, idx: number) => (
                               <tr key={idx} className="hover:bg-[#2a3241] border-b border-[#2a3a5a]/50">
                                 <td className="p-3 font-mono text-[#a5b6cf]">{new Date(log.created_at).toLocaleString('zh-TW', { hour12: false })}</td>
                                 <td className="p-3 font-bold text-[#E5B55E]">{log.training_context?.module_type || '未記錄'}</td>

@@ -185,26 +185,6 @@ export default function EyeComfortApp() {
       const targetCode = redeemCode.trim().toUpperCase();
       console.log("正在查詢授權碼:", targetCode);
 
-      const testCodes = ['AEG-RC1-X99', 'TK-774A-TMP', 'EAP-0901-BETA'];
-      const expirationDate = new Date('2026-09-04T23:59:59').getTime(); // 設定 3 天後失效
-
-      if (testCodes.includes(targetCode)) {
-        if (Date.now() > expirationDate) {
-          alert("🚨 此封測體驗碼已逾期，請聯繫 Aura EyeGym 開發團隊獲取正式授權。");
-          return; // 逾期直接阻擋
-        }
-        
-        // 未逾期，直接發放權限並跳過資料庫驗證
-        localStorage.setItem('aura_premium_unlocked', 'true');
-        localStorage.setItem('aura_clinic_id', 'BETA-TESTER'); // 標記為測試者
-        localStorage.setItem('aura_activation_code', targetCode);
-        
-        setIsPremiumUnlocked(true);
-        setShowRedeemModal(false);
-        alert("✅ 封測授權成功，歡迎進入 Aura EyeGym");
-        return; // 攔截成功，提早結束函數，不執行下方 Supabase 連線
-      }
-
       const { data: codeData, error: codeError } = await supabase
         .from('activation_codes')
         .select('*')
@@ -1797,10 +1777,10 @@ export default function EyeComfortApp() {
           <div className="absolute inset-0 z-[100] bg-black/80 flex items-center justify-center p-5 backdrop-blur-sm">
             <div className="bg-[#1a2233] border-2 border-[#00ffcc] p-6 rounded-2xl w-full max-w-[400px] shadow-[0_0_25px_rgba(0,255,204,0.3)] text-center">
               <h3 className="text-[#fffdd0] text-[22px] font-bold mb-3">🎟️ 輸入數位處方授權碼</h3>
-              <p className="text-[#8b9bb4] text-[14px] mb-4">請輸入診所配發之專屬序號</p>
+              <p className="text-[#8b9bb4] text-[14px] mb-4">請輸入診所配發之專屬序號 (測試碼: TEST-1234)</p>
               <input 
                 type="text" 
-                placeholder="例如: VIP-8859 或 專案代碼" 
+                placeholder="例如: TEST-1234" 
                 value={redeemCode}
                 onChange={(e) => setRedeemCode(e.target.value)}
                 className="w-full p-3 bg-[#0f141e] border border-[#2a3a5a] text-[#fffdd0] rounded-xl text-center text-[18px] mb-5 outline-none focus:border-[#00ffcc]"

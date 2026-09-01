@@ -186,7 +186,7 @@ export default function EyeComfortApp() {
       console.log("正在查詢授權碼:", targetCode);
 
       const testCodes = ['AEG-RC1-X99', 'TK-774A-TMP', 'EAP-0901-BETA'];
-      const expirationDate = new Date('2026-09-04T23:59:59').getTime(); // 設定 3 天後失效
+      const expirationDate = new Date('2026-09-02T23:59:59').getTime(); // 設定 3 天後失效
 
       if (testCodes.includes(targetCode)) {
         if (Date.now() > expirationDate) {

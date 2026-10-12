@@ -1,6 +1,7 @@
 begin;
 
-create extension if not exists pgcrypto;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 create schema if not exists aura_private;
 revoke all on schema aura_private from public, anon, authenticated;
@@ -138,8 +139,13 @@ create table if not exists aura_private.app_secrets (
 );
 
 insert into aura_private.app_secrets (name, value)
-values ('training_log_hmac_v2', encode(gen_random_bytes(32), 'hex'))
+values (
+  'training_log_hmac_v2',
+  encode(extensions.gen_random_bytes(32), 'hex')
+)
 on conflict (name) do nothing;
+
+alter table aura_private.app_secrets enable row level security;
 
 create or replace function aura_private.normalize_access_code(p_code text)
 returns text
@@ -158,7 +164,10 @@ immutable
 strict
 set search_path = pg_catalog, public
 as $$
-  select digest(aura_private.normalize_access_code(p_code), 'sha256');
+  select extensions.digest(
+    aura_private.normalize_access_code(p_code),
+    'sha256'
+  );
 $$;
 
 insert into public.access_codes (
@@ -317,7 +326,11 @@ begin
     end if;
 
     new.digital_signature := encode(
-      hmac(aura_private.canonical_training_log(new), signing_key, 'sha256'),
+      extensions.hmac(
+        aura_private.canonical_training_log(new),
+        signing_key,
+        'sha256'
+      ),
       'hex'
     );
   end if;
@@ -363,7 +376,11 @@ begin
   where name = 'training_log_hmac_v2';
 
   expected_signature := encode(
-    hmac(aura_private.canonical_training_log(log_row), signing_key, 'sha256'),
+    extensions.hmac(
+      aura_private.canonical_training_log(log_row),
+      signing_key,
+      'sha256'
+    ),
     'hex'
   );
 
@@ -722,7 +739,9 @@ begin
     raise exception '沒有管理此診所授權碼的權限';
   end if;
 
-  raw_code := 'AURA-' || normalized_type || '-' || upper(encode(gen_random_bytes(8), 'hex'));
+  raw_code := 'AURA-' || normalized_type || '-' || upper(
+    encode(extensions.gen_random_bytes(8), 'hex')
+  );
 
   insert into public.access_codes (
     clinic_id,
@@ -878,7 +897,9 @@ begin
     raise exception 'VIP 授權人數必須介於 1 到 100';
   end if;
 
-  raw_code := 'AURA-VIP-' || upper(encode(gen_random_bytes(8), 'hex'));
+  raw_code := 'AURA-VIP-' || upper(
+    encode(extensions.gen_random_bytes(8), 'hex')
+  );
 
   insert into public.access_codes (
     clinic_id,

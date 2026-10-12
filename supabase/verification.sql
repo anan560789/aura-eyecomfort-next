@@ -2,22 +2,33 @@
 -- This report contains counts and security metadata only; it does not expose patient rows.
 
 select
+  n.nspname as table_schema,
   c.relname as table_name,
   c.relrowsecurity as rls_enabled
 from pg_class c
 join pg_namespace n on n.oid = c.relnamespace
-where n.nspname = 'public'
-  and c.relname in (
-    'activation_codes',
-    'patients_mapping',
-    'training_logs',
-    'clinics',
-    'clinic_members',
-    'platform_admins',
-    'access_codes',
-    'access_code_redemptions'
+where (
+    n.nspname = 'public'
+    and c.relname in (
+      'activation_codes',
+      'patients_mapping',
+      'training_logs',
+      'clinics',
+      'clinic_members',
+      'platform_admins',
+      'access_codes',
+      'access_code_redemptions'
+    )
   )
-order by c.relname;
+  or (n.nspname = 'aura_private' and c.relname = 'app_secrets')
+order by n.nspname, c.relname;
+
+select
+  extension.extname,
+  namespace.nspname as schema_name
+from pg_extension extension
+join pg_namespace namespace on namespace.oid = extension.extnamespace
+where extension.extname = 'pgcrypto';
 
 select
   table_name,

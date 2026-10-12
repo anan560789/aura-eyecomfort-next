@@ -4,28 +4,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
 import liff from '@line/liff';
-import { createClient } from '@supabase/supabase-js';
-// @ts-ignore
-import NoSleep from 'nosleep.js';
+import { lineGatewayUrl, supabaseAnonKey } from '@/lib/supabase';
 
-// ==========================================
-// 1. 全域設定與 Supabase 初始化 (網址已修正)
-// ==========================================
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vttxlkquladnrnytyhpc.supabase.co';
-// 👇 請將下方的文字，換成您那串 eyJ 開頭的完整金鑰！
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0dHhsa3F1bGFkbnJueXR5aHBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MTYyMzIsImV4cCI6MjEwMTk5MjIzMn0.l_wLaECh2kgDQtMzcrvJcjc5091x4HvSgfF4rPE1cHM';
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-// ==========================================
-// 🚨 專利防護核心：醫療級防竄改 HMAC 與雜湊鏈結引擎
-// ==========================================
-const AURA_SECRET_SALT = "AuraDTx_Patent_2026_Strict_Compliance_O2O";
-async function generateHMAC(payload: any) {
-  const msgUint8 = new TextEncoder().encode(JSON.stringify(payload) + AURA_SECRET_SALT);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
+const LIFF_ID: string = (() => {
+  const value = process.env.NEXT_PUBLIC_LIFF_ID;
+  if (!value) throw new Error('缺少 NEXT_PUBLIC_LIFF_ID 環境變數。');
+  return value;
+})();
 
 const maxCycles = 3;
 const focusDepths = [-1, -15, -35, -60];
@@ -48,6 +33,59 @@ const medicalPrinciples: Record<string, any> = {
 
 type TestResult = 'NORMAL' | 'ABNORMAL' | null;
 interface DiagnosticData { leftEye: TestResult; rightEye: TestResult; }
+
+interface EntitlementResponse {
+  ok: boolean;
+  redemption_id: string;
+  clinic_id: string;
+  entitlement_level: 'STANDARD' | 'FULL' | 'VIP';
+  code_type: 'CLINIC' | 'VIP';
+  already_redeemed?: boolean;
+}
+
+interface QueuedTrainingLog {
+  payload: Record<string, unknown>;
+  attempts: number;
+  nextRetryAt: number;
+}
+
+const OFFLINE_LOGS_KEY = 'aura_offline_logs_v2';
+
+function createEventId() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+}
+
+async function callLineGateway<T>(
+  action: 'redeem' | 'entitlement' | 'append_log',
+  body: Record<string, unknown> = {},
+): Promise<T> {
+  const accessToken = liff.getAccessToken();
+  if (!accessToken) throw new Error('LINE 登入已失效，請重新開啟應用程式。');
+
+  const response = await fetch(lineGatewayUrl, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      apikey: supabaseAnonKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action, ...body }),
+  });
+  const result = await response.json().catch(() => null) as
+    | (T & { error?: string })
+    | null;
+
+  if (!response.ok) {
+    throw new Error(result?.error || '伺服器暫時無法處理請求。');
+  }
+  if (!result) throw new Error('伺服器未回傳有效結果。');
+  return result;
+}
 
 function useSafetyStateMachine(currentFaceState: string) {
   const [isValidTraining, setIsValidTraining] = useState(false);
@@ -129,6 +167,7 @@ export default function EyeComfortApp() {
   const engineRef = useRef<any>(null); 
   const audioRef = useRef<any>({ ctx: null, bgm: null, fadeInt: null, dipTimeout: null });
   const noSleepRef = useRef<any>(null);
+  const syncInProgressRef = useRef(false);
   
   const gameState = useRef({
     module: 'DASHBOARD', cycle: 1, phase: 'LOOKING', sopTimeLeft: 10, stretchTimeLeft: 45, chaserTimeLeft: 60, chaserScore: 0,
@@ -142,6 +181,7 @@ export default function EyeComfortApp() {
     isSimulatedLandscape: false,
     deviceUiAngle: 0,
     sessionStartTime: '',
+    sessionId: '',
     pauseCount: 0,
     blinkCount: 0,
     isBlinking: false,
@@ -168,102 +208,46 @@ export default function EyeComfortApp() {
   }, []);
 
   useEffect(() => {
-    const unlocked = localStorage.getItem('aura_premium_unlocked') === 'true';
+    const unlocked = localStorage.getItem('aura_premium_unlocked') === 'true'
+      && Boolean(localStorage.getItem('aura_entitlement_id'));
     setIsPremiumUnlocked(unlocked);
   }, []);
 
-  // ==========================================
-  // 🏥 O2O 核心：動態授權碼驗證與診所綁定邏輯 (已加上防呆警告)
-  // ==========================================
+  // 授權碼只能交由資料庫的原子兌換函式處理，前端不再保存完整授權碼。
   const handleRedeemCode = async () => {
     if (!redeemCode || redeemCode.trim() === '') {
       alert('請輸入授權碼');
       return;
     }
 
+    if (!lineProfile.uid || lineProfile.uid === '未登入') {
+      alert('請先使用 LINE 登入，再兌換授權碼。');
+      return;
+    }
+
     try {
       const targetCode = redeemCode.trim().toUpperCase();
-      console.log("正在查詢授權碼:", targetCode);
 
-      const testCodes = ['AEG-RC1-X99', 'TK-774A-TMP', 'EAP-0901-BETA'];
-      const expirationDate = new Date('2026-09-02T23:59:59').getTime(); // 設定 3 天後失效
-
-      if (testCodes.includes(targetCode)) {
-        if (Date.now() > expirationDate) {
-          alert("🚨 此封測體驗碼已逾期，請聯繫 Aura EyeGym 開發團隊獲取正式授權。");
-          return; // 逾期直接阻擋
-        }
-        
-        // 未逾期，直接發放權限並跳過資料庫驗證
-        localStorage.setItem('aura_premium_unlocked', 'true');
-        localStorage.setItem('aura_clinic_id', 'BETA-TESTER'); // 標記為測試者
-        localStorage.setItem('aura_activation_code', targetCode);
-        
-        setIsPremiumUnlocked(true);
-        setShowRedeemModal(false);
-        alert("✅ 封測授權成功，歡迎進入 Aura EyeGym");
-        return; // 攔截成功，提早結束函數，不執行下方 Supabase 連線
-      }
-
-      const { data: codeData, error: codeError } = await supabase
-        .from('activation_codes')
-        .select('*')
-        .eq('code', targetCode)
-        .single();
-
-      if (codeError) {
-        alert(`❌ 資料庫查詢失敗。\n錯誤代碼: ${codeError.code}\n錯誤訊息: ${codeError.message}`);
-        return;
-      }
-
-      if (!codeData) {
-        alert('❌ 找不到此授權碼，請確認資料庫中是否有新增該筆資料。');
-        return;
-      }
-
-      if (codeData.status !== 'ACTIVE' && codeData.status !== 'AVAILABLE') {
-        alert(`❌ 此授權碼狀態異常 (${codeData.status})，已被使用或失效。`);
-        return;
-      }
+      const entitlement = await callLineGateway<EntitlementResponse>('redeem', {
+        code: targetCode,
+      });
+      if (!entitlement?.ok) throw new Error('授權服務未回傳有效結果');
 
       localStorage.setItem('aura_premium_unlocked', 'true');
-      localStorage.setItem('aura_clinic_id', codeData.clinic_id || 'UNKNOWN'); 
-      localStorage.setItem('aura_activation_code', codeData.code);
-      
+      localStorage.setItem('aura_clinic_id', entitlement.clinic_id);
+      localStorage.setItem('aura_entitlement_id', entitlement.redemption_id);
+      localStorage.setItem('aura_entitlement_level', entitlement.entitlement_level);
+      localStorage.removeItem('aura_activation_code');
+
       setIsPremiumUnlocked(true);
       setShowRedeemModal(false);
-      
-      if (lineProfile.uid !== '未登入') {
-         // 寫入綁定資料並攔截錯誤
-         const { error: mapError } = await supabase.from('patients_mapping').upsert({
-             line_uid: lineProfile.uid,
-             clinic_id: codeData.clinic_id,
-             activation_code: codeData.code,
-             real_name: lineProfile.name, // 👈 確認：包含使用者的 LINE 暱稱
-             bound_at: new Date().toISOString()
-         });
-         
-         if (mapError) {
-             alert('❌ 寫入病患綁定表失敗 (patients_mapping)：\n' + mapError.message);
-             return;
-         }
-         
-         // 更新序號狀態並攔截錯誤
-         const { error: updateError } = await supabase.from('activation_codes')
-             .update({ status: 'USED', used_by_line_uid: lineProfile.uid })
-             .eq('code', codeData.code);
-             
-         if (updateError) {
-             alert('❌ 更新序號狀態失敗 (activation_codes)：\n' + updateError.message);
-             return;
-         }
-      }
+      setRedeemCode('');
 
-      alert(`✅ 兌換成功！已解鎖由 [${codeData.clinic_id || '授權診所'}] 開立的數位護眼計畫。`);
-      
+      const planName = entitlement.code_type === 'VIP' ? 'VIP 終身授權' : '診所專屬方案';
+      alert(`✅ ${planName}已啟用。`);
     } catch (err: any) {
-      console.error("驗證發生未預期例外", err);
-      alert(`❌ 發生未預期例外錯誤: ${err.message || err}`);
+      console.error('授權碼兌換失敗', err);
+      alert(`❌ ${err.message || '授權碼兌換失敗，請稍後再試。'}`);
     }
   };
 
@@ -604,49 +588,71 @@ export default function EyeComfortApp() {
   }, []);
 
   const syncOfflineLogs = useCallback(async () => {
-    const offlineKey = 'aura_offline_logs';
-    const rawLogs = localStorage.getItem(offlineKey);
-    if (!rawLogs) return;
+    if (!navigator.onLine || syncInProgressRef.current) return;
+    syncInProgressRef.current = true;
 
-    let offlineLogs = [];
-    try { offlineLogs = JSON.parse(rawLogs); } catch(e) { return; }
-    if (offlineLogs.length === 0) return;
+    try {
+      const queue: QueuedTrainingLog[] = JSON.parse(
+        localStorage.getItem(OFFLINE_LOGS_KEY) || '[]',
+      );
 
-    const validLogs = [];
-    let tamperedCount = 0;
-
-    for (const log of offlineLogs) {
-      if (!log.digital_signature) {
-        tamperedCount++;
-        continue;
+      // 將舊版佇列轉成不含客戶端密鑰與簽章的 v2 格式。
+      const legacyLogs = JSON.parse(localStorage.getItem('aura_offline_logs') || '[]');
+      for (const legacyLog of legacyLogs) {
+        const eventId = createEventId();
+        queue.push({
+          payload: {
+            event_id: eventId,
+            session_id: legacyLog.session_id || eventId,
+            occurred_at: legacyLog.created_at || new Date().toISOString(),
+            device_info: legacyLog.device_info || {},
+            training_context: legacyLog.training_context || {},
+            performance_metrics: legacyLog.performance_metrics || {},
+            objective_metrics: legacyLog.objective_metrics || {},
+            state_machine_details: legacyLog.state_machine_details || {},
+          },
+          attempts: 0,
+          nextRetryAt: 0,
+        });
       }
-      
-      const { digital_signature, ...payloadObj } = log;
-      const expectedSig = await generateHMAC(payloadObj);
-      
-      if (expectedSig === digital_signature) {
-        validLogs.push(log);
-      } else {
-        tamperedCount++;
-        console.warn(`🚨 醫療稽核警告：偵測到遭竄改的離線紀錄 (Session: ${payloadObj.session_id})，已攔截並銷毀。`);
-      }
-    }
+      if (legacyLogs.length > 0) localStorage.removeItem('aura_offline_logs');
 
-    if (validLogs.length > 0) {
-      try {
-        const { error } = await supabase.from('training_logs').insert(validLogs);
-        if (!error) {
-          console.log(`✅ 成功重傳 ${validLogs.length} 筆受簽章保護的離線紀錄至雲端`);
-          if (tamperedCount > 0) console.log(`🗑️ 已銷毀 ${tamperedCount} 筆偽造紀錄`);
-          localStorage.removeItem(offlineKey);
-        } else {
-          console.log("⏳ 雲端同步暫時失敗，資料已保留等待下次網路連線 (退避補傳機制)");
+      if (queue.length === 0) return;
+
+      const remaining: QueuedTrainingLog[] = [];
+      const now = Date.now();
+
+      for (const item of queue) {
+        if (item.nextRetryAt > now) {
+          remaining.push(item);
+          continue;
         }
-      } catch (err) {
-        console.log("⏳ 雲端同步例外，等待退避重傳...");
+
+        try {
+          const data = await callLineGateway<{ ok?: boolean }>('append_log', {
+            payload: item.payload,
+          });
+          if (!data?.ok) throw new Error('伺服器未確認紀錄');
+        } catch {
+          const attempts = item.attempts + 1;
+          const retryDelay = Math.min(30 * 60_000, 5_000 * 2 ** Math.min(attempts, 8));
+          remaining.push({
+            ...item,
+            attempts,
+            nextRetryAt: Date.now() + retryDelay,
+          });
+        }
       }
-    } else {
-      localStorage.removeItem(offlineKey);
+
+      if (remaining.length > 0) {
+        localStorage.setItem(OFFLINE_LOGS_KEY, JSON.stringify(remaining));
+      } else {
+        localStorage.removeItem(OFFLINE_LOGS_KEY);
+      }
+    } catch (error) {
+      console.warn('離線紀錄同步暫時失敗，紀錄已保留。', error);
+    } finally {
+      syncInProgressRef.current = false;
     }
   }, []);
 
@@ -666,43 +672,23 @@ export default function EyeComfortApp() {
     return 'Web';
   };
 
-  // 🏥 訓練紀錄寫入邏輯 (已加上防呆警告與完整簽章欄位)
+  // 客戶端只建立冪等事件；序列號、鏈結雜湊與 HMAC 均由資料庫產生。
   const logTraining = async (moduleName: string, durationSec: number) => { 
     if (!lineProfile.uid || lineProfile.uid === '未登入') return; 
   
     const endTime = new Date();
     const startTimeStr = gameState.current.sessionStartTime || endTime.toISOString();
     const endTimeStr = endTime.toISOString();
-  
-    let sessionUuid;
-    try {
-      sessionUuid = crypto.randomUUID();
-    } catch(e) {
-      sessionUuid = 'req_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-    }
-
-    const seqKey = 'aura_event_sequence_id';
-    let currentSeq = parseInt(localStorage.getItem(seqKey) || '0', 10);
-    currentSeq++;
-    localStorage.setItem(seqKey, currentSeq.toString());
-
-    const lastHashKey = 'aura_last_event_hash';
-    const previousHash = localStorage.getItem(lastHashKey) || 'GENESIS_HASH_00000000000000000000';
+    const eventId = createEventId();
+    const sessionId = gameState.current.sessionId || eventId;
 
     const blinkRate = (gameState.current.blinkCount / (durationSec || 1)) * 60;
     const isRelaxed = blinkRate >= 12;
 
-    const clinicId = localStorage.getItem('aura_clinic_id') || 'UNKNOWN';
-    const authCode = localStorage.getItem('aura_activation_code') || "FREE-TIER";
-
-    const payloadForSignature = {
-      session_id: sessionUuid,
-      sequence_id: currentSeq,
-      previous_hash: previousHash,
-      line_uid: lineProfile.uid,
-      auth_code: authCode,
-      clinic_id: clinicId,
-      real_name: lineProfile.name, // 👈 核心修改點：加入 LINE 暱稱以對齊診所端 HMAC
+    const payload = {
+      event_id: eventId,
+      session_id: sessionId,
+      occurred_at: endTimeStr,
       device_info: {
         os_platform: getDevicePlatform(),
         screen_refresh_rate: 60
@@ -725,29 +711,24 @@ export default function EyeComfortApp() {
         relaxation_achieved: isRelaxed
       },
       state_machine_details: gameState.current.stateMachineLog,
-      created_at: endTimeStr 
     };
 
-    const signature = await generateHMAC(payloadForSignature);
-    localStorage.setItem(lastHashKey, signature);
-    
-    const logData = { ...payloadForSignature, digital_signature: signature };
-
     try { 
-      const { error } = await supabase.from('training_logs').insert([logData]); 
-      
-      // 如果資料庫回報錯誤，直接跳出視窗！
-      if (error) {
-         alert('❌ 寫入訓練紀錄失敗 (training_logs)：\n' + error.message);
-         throw error;
+      const data = await callLineGateway<{ ok?: boolean }>('append_log', { payload });
+      if (!data?.ok) throw new Error('伺服器未確認紀錄');
+    } catch (error) {
+      console.warn('網路或授權服務暫時無法使用，訓練紀錄已進入離線佇列。', error);
+      const queue: QueuedTrainingLog[] = JSON.parse(
+        localStorage.getItem(OFFLINE_LOGS_KEY) || '[]',
+      );
+      if (!queue.some((item) => item.payload.event_id === eventId)) {
+        queue.push({
+          payload,
+          attempts: 0,
+          nextRetryAt: 0,
+        });
+        localStorage.setItem(OFFLINE_LOGS_KEY, JSON.stringify(queue));
       }
-    } catch (err: any) {
-      alert('❌ 紀錄上傳被拒絕：\n' + (err.message || '格式不符'));
-      console.warn("⚠️ 網路異常，已將受簽章保護的時序鏈結紀錄暫存至邊緣端 LocalStorage");
-      const offlineKey = 'aura_offline_logs';
-      const offlineLogs = JSON.parse(localStorage.getItem(offlineKey) || '[]');
-      offlineLogs.push(logData);
-      localStorage.setItem(offlineKey, JSON.stringify(offlineLogs));
     } 
   };
   
@@ -802,7 +783,7 @@ export default function EyeComfortApp() {
 
   const handleShareCalendar = async () => {
     const name = lineProfile.name || '我';
-    const textToShare = `👁️ Aura EyeGym 視覺復健打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配醫師推薦營養配方，補充眼睛關鍵營養！\n👉 https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID || '2011063080-EDRCTHXv'}`;
+    const textToShare = `👁️ Aura EyeGym 視覺復健打卡！\n${name}今天已經完成 ${calendarData.todayCycles} 次完整的眼部復健運動，這個月已經完成 ${calendarData.monthCycles} 次眼部復健大循環。跟我一起保護眼睛吧！\n✨ 請搭配醫師推薦營養配方，補充眼睛關鍵營養！\n👉 https://liff.line.me/${LIFF_ID}`;
 
     const fallbackCopy = () => {
       try {
@@ -840,10 +821,30 @@ export default function EyeComfortApp() {
   useEffect(() => {
     const initLiff = async () => { 
       try { 
-        await liff.init({ liffId: process.env.NEXT_PUBLIC_LIFF_ID || '' }); 
+        await liff.init({ liffId: LIFF_ID });
         if (liff.isLoggedIn()) { 
           const profile = await liff.getProfile(); 
           setLineProfile({ uid: profile.userId, name: profile.displayName }); 
+
+          try {
+            const entitlement = await callLineGateway<EntitlementResponse | null>('entitlement');
+            if (entitlement?.ok) {
+              localStorage.setItem('aura_premium_unlocked', 'true');
+              localStorage.setItem('aura_clinic_id', entitlement.clinic_id);
+              localStorage.setItem('aura_entitlement_id', entitlement.redemption_id);
+              localStorage.setItem('aura_entitlement_level', entitlement.entitlement_level);
+              setIsPremiumUnlocked(true);
+            } else {
+              localStorage.removeItem('aura_premium_unlocked');
+              localStorage.removeItem('aura_entitlement_id');
+              localStorage.removeItem('aura_entitlement_level');
+              setIsPremiumUnlocked(false);
+            }
+          } catch (error) {
+            console.warn('無法確認授權狀態', error);
+          }
+
+          await syncOfflineLogs();
         } 
       } catch (err) {
         console.error('LIFF 初始化失敗', err);
@@ -853,7 +854,7 @@ export default function EyeComfortApp() {
     };
     initLiff(); 
     loadCalendarData();
-  }, [loadCalendarData]);
+  }, [loadCalendarData, syncOfflineLogs]);
 
   // ==========================================
   // Three.js 引擎與動畫
@@ -1251,11 +1252,24 @@ export default function EyeComfortApp() {
       } else if (state.module === 'focus') {
         if (state.isWaitingForRightEye || state.focusTimeLeft <= 0) return;
         state.focusTimeLeft--; state.focusHoldTime--;
+
+        if (state.focusTimeLeft >= 60) {
+          state.stateMachineLog.phase_1_left_eye.actual_seconds = 120 - state.focusTimeLeft;
+        } else {
+          state.stateMachineLog.phase_2_right_eye.actual_seconds = 60 - state.focusTimeLeft;
+        }
         
         const currentAiSpeed = state.prescription.focusSpeed;
         if (state.focusTimeLeft === 90) state.focusCycleSpeed = currentAiSpeed * 0.75;
         if (state.focusTimeLeft === 75) state.focusCycleSpeed = currentAiSpeed * 0.5;
-        if (state.focusTimeLeft === 60) { playDingSound(); state.focusCycleSpeed = currentAiSpeed; state.isWaitingForRightEye = true; }
+        if (state.focusTimeLeft === 60) {
+          state.stateMachineLog.phase_1_left_eye.is_completed = true;
+          state.stateMachineLog.transition_interrupt.triggered = true;
+          state.stateMachineLog.transition_interrupt.started_at = new Date().toISOString();
+          playDingSound();
+          state.focusCycleSpeed = currentAiSpeed;
+          state.isWaitingForRightEye = true;
+        }
         if (state.focusTimeLeft === 30) state.focusCycleSpeed = currentAiSpeed * 0.75;
         if (state.focusTimeLeft === 15) state.focusCycleSpeed = currentAiSpeed * 0.5;
         
@@ -1265,7 +1279,10 @@ export default function EyeComfortApp() {
           else if (state.focusStep <= 0) { state.focusStep = 0; state.focusDirection = 1; }
           state.focusHoldTime = state.focusCycleSpeed; engineRef.current?.updateFocusRing(state.focusStep);
         }
-        if (state.focusTimeLeft <= 0) { state.isResting = true; state.restTimeLeft = 5; dipBGM(); playDingSound(); recordModuleCompletion('focus'); logTraining('Z 軸遠近對焦飛梭', 120); }
+        if (state.focusTimeLeft <= 0) {
+          state.stateMachineLog.phase_2_right_eye.is_completed = true;
+          state.isResting = true; state.restTimeLeft = 5; dipBGM(); playDingSound(); recordModuleCompletion('focus'); logTraining('Z 軸遠近對焦飛梭', 120);
+        }
       } else if (state.module === 'amsler' || state.module === 'astigmatism') {
         if (state.testPhase === 'LEFT_EYE_TEST' || state.testPhase === 'RIGHT_EYE_TEST') {
           state.testTimeLeft--;
@@ -1301,6 +1318,7 @@ export default function EyeComfortApp() {
     const state = gameState.current;
 
     state.sessionStartTime = new Date().toISOString();
+    state.sessionId = createEventId();
     state.pauseCount = 0;
     state.blinkCount = 0; 
     state.isBlinking = false;
@@ -1310,9 +1328,9 @@ export default function EyeComfortApp() {
   
     if (type === 'focus') {
       state.stateMachineLog = {
-        phase_1_left_eye: { target_seconds: 60, actual_seconds: 60, is_completed: true },
-        transition_interrupt: { triggered: true, pause_duration_seconds: 0, user_resumed: true },
-        phase_2_right_eye: { target_seconds: 60, actual_seconds: 60, is_completed: true }
+        phase_1_left_eye: { target_seconds: 60, actual_seconds: 0, is_completed: false },
+        transition_interrupt: { triggered: false, pause_duration_seconds: 0, user_resumed: false, started_at: null },
+        phase_2_right_eye: { target_seconds: 60, actual_seconds: 0, is_completed: false }
       };
     } else {
       state.stateMachineLog = {};
@@ -1769,7 +1787,20 @@ export default function EyeComfortApp() {
               )}
               
               {uiState.showContinue && (
-                <button onClick={() => { gameState.current.isWaitingForRightEye = false; playDingSound(); setUiState(prev => ({...prev, showContinue: false})); }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
+                <button onClick={() => {
+                  const state = gameState.current;
+                  const startedAt = state.stateMachineLog.transition_interrupt?.started_at;
+                  if (startedAt) {
+                    state.stateMachineLog.transition_interrupt.pause_duration_seconds = Math.max(
+                      0,
+                      Math.round((Date.now() - new Date(startedAt).getTime()) / 1000),
+                    );
+                  }
+                  state.stateMachineLog.transition_interrupt.user_resumed = true;
+                  state.isWaitingForRightEye = false;
+                  playDingSound();
+                  setUiState(prev => ({...prev, showContinue: false}));
+                }} className="mt-5 px-6 py-3 bg-[#00ffcc] text-[#0f141e] border-none rounded-[30px] text-[18px] font-bold cursor-pointer pointer-events-auto shadow-[0_4px_15px_rgba(0,255,204,0.4)]">▶ 準備好了，繼續訓練右眼</button>
               )}
             </div>
           </>

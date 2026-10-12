@@ -1,0 +1,4 @@
+[functions.line-gateway]
+# The bearer token is a LINE access token, not a Supabase JWT. The function
+# verifies it with LINE and checks that it belongs to this LIFF channel.
+verify_jwt = false

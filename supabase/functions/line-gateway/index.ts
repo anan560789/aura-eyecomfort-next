@@ -45,6 +45,26 @@ function getAllowedOrigins() {
   return new Set([...DEFAULT_ALLOWED_ORIGINS, ...configured]);
 }
 
+function getSupabaseServerKey() {
+  const secretKeys = Deno.env.get('SUPABASE_SECRET_KEYS');
+  if (secretKeys) {
+    try {
+      const parsed = JSON.parse(secretKeys) as Record<string, unknown>;
+      if (typeof parsed.default === 'string' && parsed.default) {
+        return parsed.default;
+      }
+      const firstKey = Object.values(parsed).find(
+        (value): value is string => typeof value === 'string' && value.length > 0,
+      );
+      if (firstKey) return firstKey;
+    } catch {
+      // Continue to the legacy fallback below if the injected JSON is malformed.
+    }
+  }
+
+  return Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || null;
+}
+
 async function verifyLineIdentity(accessToken: string) {
   const expectedChannelId = Deno.env.get('LINE_CHANNEL_ID');
   if (!expectedChannelId) throw new Error('LINE_CHANNEL_ID 尚未設定');
@@ -118,8 +138,8 @@ Deno.serve(async (request) => {
     const { lineUid, realName } = await verifyLineIdentity(accessToken);
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-    if (!supabaseUrl || !serviceRoleKey) {
+    const serverKey = getSupabaseServerKey();
+    if (!supabaseUrl || !serverKey) {
       throw new Error('Supabase 伺服器環境變數尚未就緒');
     }
 
@@ -158,8 +178,8 @@ Deno.serve(async (request) => {
     const rpcResponse = await fetch(`${supabaseUrl}/rest/v1/rpc/${rpcName}`, {
       method: 'POST',
       headers: {
-        apikey: serviceRoleKey,
-        Authorization: `Bearer ${serviceRoleKey}`,
+        apikey: serverKey,
+        Authorization: `Bearer ${serverKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(rpcBody),

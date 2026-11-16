@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
 import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
 import liff from '@line/liff';
+import { useAuraLineLogin } from './aura-line-login';
 import { createClient } from '@supabase/supabase-js';
 // @ts-ignore
 import NoSleep from 'nosleep.js';
@@ -12,15 +13,20 @@ import NoSleep from 'nosleep.js';
 // 1. 全域設定與 Supabase 初始化 (網址已修正)
 // ==========================================
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vttxlkquladnrnytyhpc.supabase.co';
-// 👇 請將下方的文字，換成您那串 eyJ 開頭的完整金鑰！
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0dHhsa3F1bGFkbnJueXR5aHBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MTYyMzIsImV4cCI6MjEwMTk5MjIzMn0.l_wLaECh2kgDQtMzcrvJcjc5091x4HvSgfF4rPE1cHM';
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const supabase = supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
+
+function getSupabase() {
+  if (!supabase) throw new Error('NEXT_PUBLIC_SUPABASE_ANON_KEY is required');
+  return supabase;
+}
 
 // ==========================================
 // 🚨 專利防護核心：醫療級防竄改 HMAC 與雜湊鏈結引擎
 // ==========================================
-const AURA_SECRET_SALT = "AuraDTx_Patent_2026_Strict_Compliance_O2O";
+const AURA_SECRET_SALT = process.env.NEXT_PUBLIC_AURA_SIGNATURE_SALT;
 async function generateHMAC(payload: any) {
+  if (!AURA_SECRET_SALT) throw new Error('NEXT_PUBLIC_AURA_SIGNATURE_SALT is required');
   const msgUint8 = new TextEncoder().encode(JSON.stringify(payload) + AURA_SECRET_SALT);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
@@ -93,8 +99,8 @@ export default function EyeComfortApp() {
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
   
-  const [isLiffReady, setIsLiffReady] = useState<boolean>(false);
-  const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
+  const lineLogin = useAuraLineLogin();
+  const { profile: lineProfile, ready: isLiffReady } = lineLogin;
   
   const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: React.ReactNode, position: 'BOTTOM' | 'CENTER', showContinue: boolean, showInput: boolean }>({ title: '', timer: '', position: 'BOTTOM', showContinue: false, showInput: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
@@ -205,7 +211,7 @@ export default function EyeComfortApp() {
         return; // 攔截成功，提早結束函數，不執行下方 Supabase 連線
       }
 
-      const { data: codeData, error: codeError } = await supabase
+      const { data: codeData, error: codeError } = await getSupabase()
         .from('activation_codes')
         .select('*')
         .eq('code', targetCode)
@@ -235,7 +241,7 @@ export default function EyeComfortApp() {
       
       if (lineProfile.uid !== '未登入') {
          // 寫入綁定資料並攔截錯誤
-         const { error: mapError } = await supabase.from('patients_mapping').upsert({
+         const { error: mapError } = await getSupabase().from('patients_mapping').upsert({
              line_uid: lineProfile.uid,
              clinic_id: codeData.clinic_id,
              activation_code: codeData.code,
@@ -249,7 +255,7 @@ export default function EyeComfortApp() {
          }
          
          // 更新序號狀態並攔截錯誤
-         const { error: updateError } = await supabase.from('activation_codes')
+         const { error: updateError } = await getSupabase().from('activation_codes')
              .update({ status: 'USED', used_by_line_uid: lineProfile.uid })
              .eq('code', codeData.code);
              
@@ -604,6 +610,7 @@ export default function EyeComfortApp() {
   }, []);
 
   const syncOfflineLogs = useCallback(async () => {
+    if (!AURA_SECRET_SALT) return;
     const offlineKey = 'aura_offline_logs';
     const rawLogs = localStorage.getItem(offlineKey);
     if (!rawLogs) return;
@@ -634,7 +641,7 @@ export default function EyeComfortApp() {
 
     if (validLogs.length > 0) {
       try {
-        const { error } = await supabase.from('training_logs').insert(validLogs);
+        const { error } = await getSupabase().from('training_logs').insert(validLogs);
         if (!error) {
           console.log(`✅ 成功重傳 ${validLogs.length} 筆受簽章保護的離線紀錄至雲端`);
           if (tamperedCount > 0) console.log(`🗑️ 已銷毀 ${tamperedCount} 筆偽造紀錄`);
@@ -670,6 +677,11 @@ export default function EyeComfortApp() {
   const logTraining = async (moduleName: string, durationSec: number) => { 
     if (!lineProfile.uid || lineProfile.uid === '未登入') return; 
   
+    if (!AURA_SECRET_SALT) {
+      console.error('NEXT_PUBLIC_AURA_SIGNATURE_SALT is required for training log upload');
+      return;
+    }
+
     const endTime = new Date();
     const startTimeStr = gameState.current.sessionStartTime || endTime.toISOString();
     const endTimeStr = endTime.toISOString();
@@ -734,7 +746,7 @@ export default function EyeComfortApp() {
     const logData = { ...payloadForSignature, digital_signature: signature };
 
     try { 
-      const { error } = await supabase.from('training_logs').insert([logData]); 
+      const { error } = await getSupabase().from('training_logs').insert([logData]); 
       
       // 如果資料庫回報錯誤，直接跳出視窗！
       if (error) {
@@ -823,7 +835,7 @@ export default function EyeComfortApp() {
     };
 
     try {
-      if (liff.isLoggedIn() && liff.isApiAvailable('shareTargetPicker')) {
+      if (!lineLogin.standalone && liff.isLoggedIn() && liff.isApiAvailable('shareTargetPicker')) {
         const res = await liff.shareTargetPicker([{ type: "text", text: textToShare }]);
         if (res) return; 
       }
@@ -838,20 +850,6 @@ export default function EyeComfortApp() {
   };
 
   useEffect(() => {
-    const initLiff = async () => { 
-      try { 
-        await liff.init({ liffId: process.env.NEXT_PUBLIC_LIFF_ID || '' }); 
-        if (liff.isLoggedIn()) { 
-          const profile = await liff.getProfile(); 
-          setLineProfile({ uid: profile.userId, name: profile.displayName }); 
-        } 
-      } catch (err) {
-        console.error('LIFF 初始化失敗', err);
-      } finally {
-        setIsLiffReady(true);
-      }
-    };
-    initLiff(); 
     loadCalendarData();
   }, [loadCalendarData]);
 
@@ -1421,11 +1419,35 @@ export default function EyeComfortApp() {
             <div className={`text-[20px] text-center leading-[1.5] mb-[20px] break-keep ${lineProfile.uid !== '未登入' ? 'text-[#00ffcc]' : 'text-[#8b9bb4]'}`}>
               {!isLiffReady ? (
                 <span className="text-[#8b9bb4] animate-pulse block my-[10px]">🔄 LINE 認證連線中...</span>
+              ) : lineLogin.browserLink ? (
+                lineLogin.approved ? (
+                  <p>LINE 帳號已連結。請回到主畫面，開啟 Aura EyeGym。</p>
+                ) : (
+                  <>
+                    <p>請核對主畫面 App 顯示的識別碼 <strong>{lineLogin.code}</strong>。</p>
+                    {lineProfile.uid === '未登入' ? (
+                      <button type="button" disabled={lineLogin.busy} onClick={lineLogin.login} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">🟢 使用 LINE 一鍵登入</button>
+                    ) : (
+                      <button type="button" onClick={lineLogin.approveDesktopLink} disabled={lineLogin.busy} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">以 {lineProfile.name} 的 LINE 帳號確認連結</button>
+                    )}
+                  </>
+                )
               ) : lineProfile.uid !== '未登入' ? (
                 `歡迎回來，${lineProfile.name}！請選擇您的專屬放鬆模組`
+              ) : lineLogin.standalone ? (
+                lineLogin.desktopLinkUrl ? (
+                  <>
+                    <p>連結識別碼 <strong>{lineLogin.code}</strong></p>
+                    <a href={lineLogin.desktopLinkUrl} target="_blank" rel="noopener noreferrer" className="inline-block mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">開啟 LINE 登入頁</a>
+                    <p className="mt-2 text-sm">在瀏覽器確認連結，再回到主畫面開啟 Aura EyeGym。</p>
+                  </>
+                ) : (
+                  <button type="button" onClick={lineLogin.beginDesktopLink} disabled={lineLogin.busy} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">連結 LINE 帳號</button>
+                )
               ) : (
-                <>請選擇您的專屬眼部放鬆與訓練模組<br /><button onClick={() => liff.login({ redirectUri: window.location.href })} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">🟢 使用 LINE 一鍵登入</button></>
+                <>請選擇您的專屬眼部放鬆與訓練模組<br /><button type="button" disabled={lineLogin.busy} onClick={lineLogin.login} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">🟢 使用 LINE 一鍵登入</button></>
               )}
+              {lineLogin.message && <p className="mt-2 text-sm" role="status">{lineLogin.message}</p>}
             </div>
 
             <div className="bg-[#162b2b] border border-[#00ffcc] rounded-lg p-3 mb-[30px] w-full max-w-[800px] text-center shadow-[0_0_10px_rgba(0,255,204,0.2)]">

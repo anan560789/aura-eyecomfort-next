@@ -70,7 +70,7 @@ async function callLineGateway<T>(
   const response = await fetch(lineGatewayUrl, {
     method: 'POST',
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      'X-Line-Access-Token': accessToken,
       apikey: supabaseAnonKey,
       'Content-Type': 'application/json',
     },

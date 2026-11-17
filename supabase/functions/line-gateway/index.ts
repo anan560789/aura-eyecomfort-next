@@ -1,3 +1,5 @@
+import { createClient } from 'npm:@supabase/supabase-js@2';
+
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://aura-eyecomfort-next.pages.dev',
   'http://localhost:3000',
@@ -108,7 +110,7 @@ Deno.serve(async (request) => {
       status: 204,
       headers: {
         'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Headers': 'apikey, authorization, content-type',
+        'Access-Control-Allow-Headers': 'apikey, content-type, x-line-access-token',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Max-Age': '86400',
         'Vary': 'Origin',
@@ -125,10 +127,8 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: '請求內容過大' }, 413, origin);
   }
 
-  const authorization = request.headers.get('Authorization') || '';
-  const accessToken = authorization.startsWith('Bearer ')
-    ? authorization.slice(7).trim()
-    : '';
+  const accessToken =
+    request.headers.get('X-Line-Access-Token')?.trim() || '';
   if (!accessToken) {
     return jsonResponse({ error: '缺少 LINE 登入憑證' }, 401, origin);
   }
@@ -175,23 +175,24 @@ Deno.serve(async (request) => {
         return jsonResponse({ error: '不支援的操作' }, 400, origin);
     }
 
-    const rpcResponse = await fetch(`${supabaseUrl}/rest/v1/rpc/${rpcName}`, {
-      method: 'POST',
-      headers: {
-        apikey: serverKey,
-        Authorization: `Bearer ${serverKey}`,
-        'Content-Type': 'application/json',
+    const supabaseAdmin = createClient(supabaseUrl, serverKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
       },
-      body: JSON.stringify(rpcBody),
     });
-    const rpcResult = await rpcResponse.json().catch(() => null);
+    const {
+      data: rpcResult,
+      error: rpcError,
+      status: rpcStatus,
+    } = await supabaseAdmin.rpc(rpcName, rpcBody);
 
-    if (!rpcResponse.ok) {
-      const message = rpcResult && typeof rpcResult === 'object'
-        && 'message' in rpcResult && typeof rpcResult.message === 'string'
-        ? rpcResult.message
-        : '伺服器操作失敗';
-      return jsonResponse({ error: message }, rpcResponse.status, origin);
+    if (rpcError) {
+      return jsonResponse(
+        { error: rpcError.message || '伺服器操作失敗' },
+        rpcStatus >= 400 ? rpcStatus : 500,
+        origin,
+      );
     }
 
     return jsonResponse(

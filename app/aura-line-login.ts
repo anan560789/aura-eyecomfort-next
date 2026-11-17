@@ -84,8 +84,11 @@ export function useAuraLineLogin() {
     const params = new URL(window.location.href).searchParams;
     const browserChallenge = params.get(linkParam) ?? '';
     const hasBrowserChallenge = challengeFormat.test(browserChallenge);
+    const isLineClient = /\bLine\/[\d.]+/i.test(navigator.userAgent);
     // WebKit can also report standalone for a browser window opened by the installed app.
-    const homeScreen = !hasBrowserChallenge && !params.has('liff.state') && (
+    // LINE's full-screen LIFF WebView can report fullscreen as well, so never
+    // classify a LINE user agent as the installed home-screen app.
+    const homeScreen = !isLineClient && !hasBrowserChallenge && !params.has('liff.state') && (
       params.get(homeScreenParam) === '1' ||
       window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches ||
       (navigator as Navigator & { standalone?: boolean }).standalone === true

@@ -61,12 +61,22 @@ function createEventId() {
   return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
 }
 
+function getLineAccessToken() {
+  try {
+    return liff.getAccessToken();
+  } catch {
+    return null;
+  }
+}
+
 async function callLineGateway<T>(
   action: 'redeem' | 'entitlement' | 'append_log',
   body: Record<string, unknown> = {},
 ): Promise<T> {
-  const accessToken = liff.getAccessToken();
-  if (!accessToken) throw new Error('LINE 登入已失效，請重新開啟應用程式。');
+  const accessToken = getLineAccessToken();
+  if (!accessToken) {
+    throw new Error('請由 LINE 內開啟 Aura EyeGym，再進行授權或同步。');
+  }
 
   const response = await fetch(lineGatewayUrl, {
     method: 'POST',
@@ -828,7 +838,7 @@ export default function EyeComfortApp() {
     const refreshEntitlement = async () => {
       // 已安裝的主畫面 App 使用經驗證的伺服器 Session 登入；兌換與雲端
       // 寫入仍要求即時 LINE access token，避免只憑前端 UID 操作資料庫。
-      if (!liff.getAccessToken()) return;
+      if (!getLineAccessToken()) return;
 
       try {
         const entitlement = await callLineGateway<EntitlementResponse | null>('entitlement');

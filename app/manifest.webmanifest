@@ -1,0 +1,18 @@
+{
+  "id": "/",
+  "name": "Aura EyeGym",
+  "short_name": "Aura EyeGym",
+  "lang": "zh-TW",
+  "start_url": "/?auraHomeScreen=1",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#11161e",
+  "theme_color": "#11161e",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "type": "image/x-icon",
+      "sizes": "16x16 32x32 48x48 256x256"
+    }
+  ]
+}

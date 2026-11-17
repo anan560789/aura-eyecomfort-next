@@ -9,6 +9,7 @@ type DesktopLink = { proof: string; challenge: string; startedAt: number };
 const signedOut = { uid: '未登入', name: '' };
 const sessionPath = '/api/aura-line-session';
 const linkParam = 'auraDesktopLink';
+const homeScreenParam = 'auraHomeScreen';
 const challengeFormat = /^[A-Za-z0-9_-]{43}$/;
 const desktopLinkKey = 'aura:pendingDesktopLogin';
 const linkLifetime = 5 * 60 * 1000;
@@ -80,12 +81,18 @@ export function useAuraLineLogin() {
 
   useEffect(() => {
     let active = true;
-    const homeScreen = window.matchMedia('(display-mode: standalone)').matches ||
-      (navigator as Navigator & { standalone?: boolean }).standalone === true;
-    const browserChallenge = new URL(window.location.href).searchParams.get(linkParam) ?? '';
+    const params = new URL(window.location.href).searchParams;
+    const browserChallenge = params.get(linkParam) ?? '';
+    const hasBrowserChallenge = challengeFormat.test(browserChallenge);
+    // WebKit can also report standalone for a browser window opened by the installed app.
+    const homeScreen = !hasBrowserChallenge && !params.has('liff.state') && (
+      params.get(homeScreenParam) === '1' ||
+      window.matchMedia('(display-mode: standalone), (display-mode: fullscreen)').matches ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true
+    );
 
     setStandalone(homeScreen);
-    if (!homeScreen && challengeFormat.test(browserChallenge)) setChallenge(browserChallenge);
+    if (hasBrowserChallenge) setChallenge(browserChallenge);
 
     async function initialize() {
       let saved: Profile | null = null;
@@ -114,7 +121,7 @@ export function useAuraLineLogin() {
         const token = liff.getAccessToken();
         if (!active || !liff.isLoggedIn() || !token) return;
 
-        if (!saved || challengeFormat.test(browserChallenge)) {
+        if (!saved || hasBrowserChallenge) {
           try {
             const response = await sessionRequest({ action: 'login', token });
             if (response.ok) {
@@ -127,7 +134,12 @@ export function useAuraLineLogin() {
           }
           if (saved) return;
           const result = await liff.getProfile();
-          if (active) setProfile({ uid: result.userId, name: result.displayName });
+          if (active) {
+            setProfile({ uid: result.userId, name: result.displayName });
+            if (!liff.isInClient() && !hasBrowserChallenge) {
+              setMessage('瀏覽器已登入，暫時無法將登入狀態儲存到主畫面 App。');
+            }
+          }
         }
       } catch {
         if (active && !saved) setMessage('LINE 認證暫時無法連線。');
@@ -243,6 +255,9 @@ export function useAuraLineLogin() {
       }
       const result = await liff.getProfile();
       setProfile({ uid: result.userId, name: result.displayName });
+      if (!liff.isInClient() && !challenge) {
+        setMessage('瀏覽器已登入，暫時無法將登入狀態儲存到主畫面 App。');
+      }
     } catch {
       setMessage('登入尚未完成，請稍後再試。');
     } finally {
@@ -260,6 +275,8 @@ export function useAuraLineLogin() {
       if (response.ok) {
         setApproved(true);
         window.history.replaceState(window.history.state, '', '/');
+      } else if (response.status === 503) {
+        setMessage('連結服務暫時無法使用，請稍後再試。');
       } else {
         setMessage('無法完成連結。請確認已登入欲使用的 LINE 帳號後再試。');
       }

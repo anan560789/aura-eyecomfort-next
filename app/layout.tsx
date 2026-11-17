@@ -15,6 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Aura EyeGym | 數位視覺復健中心",
   description: "專為現代人設計的 3D 數位視覺復健與眼肌放鬆系統。結合睫狀肌深空追光、動態眼肌伸展與神經放鬆，每天 3 分鐘，找回清晰視力。",
+  appleWebApp: { capable: true, title: "Aura EyeGym" },
   openGraph: {
     title: "Aura EyeGym | 數位視覺復健中心",
     description: "專為現代人設計的 3D 數位視覺復健系統。每天 3 分鐘，找回清晰視力。",

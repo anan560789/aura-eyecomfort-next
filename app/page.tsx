@@ -74,19 +74,41 @@ async function callLineGateway<T>(
   action: 'redeem' | 'entitlement' | 'append_log',
   body: Record<string, unknown> = {},
 ): Promise<T> {
+  const requestBody = { action, ...body };
   const accessToken = getLineAccessToken();
-  if (!accessToken) {
-    throw new Error('請由 LINE 內開啟 Aura EyeGym，再進行授權或同步。');
+  const headers: Record<string, string> = {
+    apikey: supabaseAnonKey,
+    'Content-Type': 'application/json',
+  };
+
+  if (accessToken) {
+    headers['X-Line-Access-Token'] = accessToken;
+  } else {
+    const proofResponse = await fetch('/api/aura-line-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'gateway',
+        gatewayAction: action,
+        requestBody,
+      }),
+    });
+    const proofResult = await proofResponse.json().catch(() => null) as
+      | { proof?: string; error?: string }
+      | null;
+    if (!proofResponse.ok || !proofResult?.proof) {
+      if (proofResponse.status === 401) {
+        throw new Error('App 登入已逾期，請重新連結 LINE 帳號。');
+      }
+      throw new Error('App 驗證服務暫時無法使用，請稍後再試。');
+    }
+    headers['X-Aura-Session-Proof'] = proofResult.proof;
   }
 
   const response = await fetch(lineGatewayUrl, {
     method: 'POST',
-    headers: {
-      'X-Line-Access-Token': accessToken,
-      apikey: supabaseAnonKey,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ action, ...body }),
+    headers,
+    body: JSON.stringify(requestBody),
   });
   const result = await response.json().catch(() => null) as
     | (T & { error?: string })
@@ -837,10 +859,6 @@ export default function EyeComfortApp() {
     }
 
     const refreshEntitlement = async () => {
-      // 已安裝的主畫面 App 使用經驗證的伺服器 Session 登入；兌換與雲端
-      // 寫入仍要求即時 LINE access token，避免只憑前端 UID 操作資料庫。
-      if (!getLineAccessToken()) return;
-
       try {
         const entitlement = await callLineGateway<EntitlementResponse | null>('entitlement');
         if (entitlement?.ok) {

@@ -1,5 +1,10 @@
 type LineProfile = { uid: string; name: string };
 type Session = { profile: LineProfile; expiresAt: number };
+type GatewayAction = 'redeem' | 'entitlement' | 'append_log';
+type GatewaySession = Session & {
+  gatewayAction: GatewayAction;
+  requestDigest: string;
+};
 
 type Statement = {
   bind(...values: (string | number)[]): Statement;
@@ -18,7 +23,9 @@ type Options = {
 const cookieName = '__Host-aura_line';
 const sessionSeconds = 7 * 24 * 60 * 60;
 const linkSeconds = 5 * 60;
+const gatewaySeconds = 60;
 const base64urlPattern = /^[A-Za-z0-9_-]{43}$/;
+const gatewayActions = new Set<GatewayAction>(['redeem', 'entitlement', 'append_log']);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -31,7 +38,7 @@ function decode(value: string) {
   return Uint8Array.from(atob(padded), character => character.charCodeAt(0));
 }
 
-async function seal(key: CryptoKey, session: Session, purpose: string) {
+async function seal(key: CryptoKey, session: object, purpose: string) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv, additionalData: encoder.encode(purpose) },
@@ -41,7 +48,12 @@ async function seal(key: CryptoKey, session: Session, purpose: string) {
   return encode(Uint8Array.from([...iv, ...new Uint8Array(encrypted)]));
 }
 
-async function unseal(key: CryptoKey, value: string | undefined, purpose: string, now: number) {
+async function unseal<T extends { expiresAt: number }>(
+  key: CryptoKey,
+  value: string | undefined,
+  purpose: string,
+  now: number,
+) {
   if (!value || value.length > 2048) return null;
   try {
     const data = decode(value);
@@ -51,11 +63,38 @@ async function unseal(key: CryptoKey, value: string | undefined, purpose: string
       key,
       data.slice(12),
     );
-    const session = JSON.parse(decoder.decode(decrypted)) as Session;
-    return session.expiresAt > now ? session : null;
+    const session = JSON.parse(decoder.decode(decrypted)) as T;
+    return typeof session.expiresAt === 'number' && session.expiresAt > now ? session : null;
   } catch {
     return null;
   }
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isGatewayAction(value: unknown): value is GatewayAction {
+  return typeof value === 'string' && gatewayActions.has(value as GatewayAction);
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return JSON.stringify(value);
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isObject(value)) {
+    return `{${Object.keys(value).sort().map(
+      key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`,
+    ).join(',')}}`;
+  }
+  throw new Error('request');
+}
+
+async function requestDigest(value: unknown) {
+  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(canonicalJson(value)));
+  return encode(new Uint8Array(digest));
 }
 
 function respond(body: object, status = 200, cookie?: string) {
@@ -99,8 +138,11 @@ async function signIn(key: CryptoKey, profile: LineProfile, now: number) {
 }
 
 export async function handleAuraLineSession(request: Request, options: Options) {
-  if (request.method !== 'GET' &&
-      request.headers.get('origin') !== new URL(request.url).origin) {
+  const requestOrigin = request.headers.get('origin');
+  const sameOrigin = requestOrigin === new URL(request.url).origin;
+  const serverConsume = request.method === 'POST' && requestOrigin === null;
+
+  if (request.method !== 'GET' && !sameOrigin && !serverConsume) {
     return respond({ error: 'origin' }, 403);
   }
 
@@ -114,7 +156,7 @@ export async function handleAuraLineSession(request: Request, options: Options) 
     const now = Math.floor(Date.now() / 1000);
     const cookie = readCookie(request);
     if (request.method === 'GET') {
-      const session = await unseal(key, cookie, cookieName, now);
+      const session = await unseal<Session>(key, cookie, cookieName, now);
       return respond({ profile: session?.profile ?? null });
     }
 
@@ -122,10 +164,73 @@ export async function handleAuraLineSession(request: Request, options: Options) 
       return respond({ error: 'request' }, 400);
     }
 
+    const contentLength = Number(request.headers.get('content-length') || 0);
+    if (contentLength > 128_000) return respond({ error: 'request' }, 413);
     const raw = await request.text();
-    if (raw.length > 4096) return respond({ error: 'request' }, 400);
-    const body = JSON.parse(raw) as { action?: unknown; token?: unknown; challenge?: unknown; proof?: unknown; expectedUid?: unknown } | null;
+    if (raw.length > 128_000) return respond({ error: 'request' }, 413);
+    const body = JSON.parse(raw) as {
+      action?: unknown;
+      token?: unknown;
+      challenge?: unknown;
+      proof?: unknown;
+      expectedUid?: unknown;
+      gatewayAction?: unknown;
+      requestBody?: unknown;
+    } | null;
     if (!body || typeof body !== 'object') return respond({ error: 'request' }, 400);
+    if (body.action !== 'gateway' && body.action !== 'consume-gateway' && raw.length > 4096) {
+      return respond({ error: 'request' }, 400);
+    }
+
+    if (body.action === 'gateway') {
+      if (!sameOrigin || !options.links) return respond({ error: 'unconfigured' }, 503);
+      const session = await unseal<Session>(key, cookie, cookieName, now);
+      if (!session) return respond({ error: 'session-expired' }, 401);
+      if (!isGatewayAction(body.gatewayAction) || !isObject(body.requestBody) ||
+          body.requestBody.action !== body.gatewayAction) {
+        return respond({ error: 'request' }, 400);
+      }
+
+      const proofBytes = crypto.getRandomValues(new Uint8Array(32));
+      const proof = encode(proofBytes);
+      const challengeBytes = await crypto.subtle.digest('SHA-256', proofBytes);
+      const challenge = encode(new Uint8Array(challengeBytes));
+      const expiresAt = now + gatewaySeconds;
+      const gatewaySession: GatewaySession = {
+        profile: session.profile,
+        expiresAt,
+        gatewayAction: body.gatewayAction,
+        requestDigest: await requestDigest(body.requestBody),
+      };
+      const sealed = await seal(key, gatewaySession, challenge);
+      await options.links.prepare('DELETE FROM aura_pwa_links WHERE expires_at <= ?').bind(now).run();
+      const saved = await options.links.prepare(
+        'INSERT INTO aura_pwa_links (challenge, sealed_profile, expires_at) VALUES (?, ?, ?) ON CONFLICT(challenge) DO NOTHING RETURNING challenge',
+      ).bind(challenge, sealed, expiresAt).first<{ challenge: string }>();
+      if (!saved) return respond({ error: 'unavailable' }, 503);
+      return respond({ proof });
+    }
+
+    if (body.action === 'consume-gateway') {
+      if (!serverConsume || !options.links || typeof body.proof !== 'string' ||
+          !base64urlPattern.test(body.proof) || !isGatewayAction(body.gatewayAction) ||
+          !isObject(body.requestBody) || body.requestBody.action !== body.gatewayAction) {
+        return respond({ error: 'request' }, 400);
+      }
+      const proofBytes = decode(body.proof);
+      const challengeBytes = await crypto.subtle.digest('SHA-256', proofBytes);
+      const challenge = encode(new Uint8Array(challengeBytes));
+      const row = await options.links.prepare(
+        'DELETE FROM aura_pwa_links WHERE challenge = ? AND expires_at > ? RETURNING sealed_profile',
+      ).bind(challenge, now).first<{ sealed_profile: string }>();
+      if (!row) return respond({ error: 'session-proof' }, 401);
+      const gatewaySession = await unseal<GatewaySession>(key, row.sealed_profile, challenge, now);
+      if (!gatewaySession || gatewaySession.gatewayAction !== body.gatewayAction ||
+          gatewaySession.requestDigest !== await requestDigest(body.requestBody)) {
+        return respond({ error: 'session-proof' }, 401);
+      }
+      return respond({ profile: gatewaySession.profile });
+    }
 
     if (body.action === 'login' || body.action === 'approve') {
       if (body.action === 'approve' &&
@@ -135,7 +240,7 @@ export async function handleAuraLineSession(request: Request, options: Options) 
       const token = body.token;
       const profile = typeof token === 'string' && token.length > 0 && token.length < 2048
         ? await readLineProfile(token, options.channelId)
-        : body.action === 'approve' ? (await unseal(key, cookie, cookieName, now))?.profile : null;
+        : body.action === 'approve' ? (await unseal<Session>(key, cookie, cookieName, now))?.profile : null;
       if (!profile) return respond({ error: 'line-login' }, 401);
       if (body.action === 'login') return signIn(key, profile, now);
 
@@ -152,7 +257,7 @@ export async function handleAuraLineSession(request: Request, options: Options) 
         const prior = await options.links.prepare(
           'SELECT sealed_profile FROM aura_pwa_links WHERE challenge = ? AND expires_at > ?',
         ).bind(challenge, now).first<{ sealed_profile: string }>();
-        const existing = await unseal(key, prior?.sealed_profile, challenge, now);
+        const existing = await unseal<Session>(key, prior?.sealed_profile, challenge, now);
         if (existing?.profile.uid !== profile.uid) return respond({ error: 'link-conflict' }, 403);
       }
       return respond({ approved: true });
@@ -169,7 +274,7 @@ export async function handleAuraLineSession(request: Request, options: Options) 
         'DELETE FROM aura_pwa_links WHERE challenge = ? AND expires_at > ? RETURNING sealed_profile',
       ).bind(challenge, now).first<{ sealed_profile: string }>();
       if (!row) return respond({ pending: true }, 202);
-      const session = await unseal(key, row.sealed_profile, challenge, now);
+      const session = await unseal<Session>(key, row.sealed_profile, challenge, now);
       if (!session) return respond({ error: 'link' }, 410);
       return signIn(key, session.profile, now);
     }

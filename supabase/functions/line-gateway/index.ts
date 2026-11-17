@@ -25,6 +25,13 @@ interface LineProfile {
   displayName?: string;
 }
 
+interface AppSessionResponse {
+  profile?: {
+    uid?: string;
+    name?: string;
+  };
+}
+
 function jsonResponse(
   body: Record<string, unknown> | unknown[],
   status: number,
@@ -97,6 +104,35 @@ async function verifyLineIdentity(accessToken: string) {
   return { lineUid: profile.userId, realName: profile.displayName };
 }
 
+async function verifyAppIdentity(
+  proof: string,
+  body: GatewayRequest,
+  origin: string,
+) {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(proof) || !origin) {
+    throw new Error('APP 登入憑證格式錯誤');
+  }
+
+  const response = await fetch(`${origin}/api/aura-line-session`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'consume-gateway',
+      proof,
+      gatewayAction: body.action,
+      requestBody: body,
+    }),
+  });
+  const result = await response.json() as AppSessionResponse;
+  const lineUid = result.profile?.uid;
+  const realName = result.profile?.name;
+  if (!response.ok || typeof lineUid !== 'string' || !/^U[0-9a-f]{32}$/i.test(lineUid) ||
+      typeof realName !== 'string' || realName.length === 0 || realName.length > 100) {
+    throw new Error('APP 登入已逾期或驗證失敗');
+  }
+  return { lineUid, realName };
+}
+
 Deno.serve(async (request) => {
   const origin = request.headers.get('Origin') || '';
   const allowedOrigins = getAllowedOrigins();
@@ -110,7 +146,7 @@ Deno.serve(async (request) => {
       status: 204,
       headers: {
         'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Headers': 'apikey, content-type, x-line-access-token',
+        'Access-Control-Allow-Headers': 'apikey, content-type, x-line-access-token, x-aura-session-proof',
         'Access-Control-Allow-Methods': 'POST, OPTIONS',
         'Access-Control-Max-Age': '86400',
         'Vary': 'Origin',
@@ -127,15 +163,13 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: '請求內容過大' }, 413, origin);
   }
 
-  const accessToken =
-    request.headers.get('X-Line-Access-Token')?.trim() || '';
-  if (!accessToken) {
-    return jsonResponse({ error: '缺少 LINE 登入憑證' }, 401, origin);
-  }
-
   try {
     const body = await request.json() as GatewayRequest;
-    const { lineUid, realName } = await verifyLineIdentity(accessToken);
+    const accessToken = request.headers.get('X-Line-Access-Token')?.trim() || '';
+    const appProof = request.headers.get('X-Aura-Session-Proof')?.trim() || '';
+    const { lineUid, realName } = accessToken
+      ? await verifyLineIdentity(accessToken)
+      : await verifyAppIdentity(appProof, body, origin);
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const serverKey = getSupabaseServerKey();
@@ -202,7 +236,8 @@ Deno.serve(async (request) => {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : '伺服器驗證失敗';
-    const status = message.startsWith('LINE ') || message.startsWith('無法向 LINE')
+    const status = message.startsWith('LINE ') || message.startsWith('無法向 LINE') ||
+      message.startsWith('APP ')
       ? 401
       : 500;
     return jsonResponse({ error: message }, status, origin);

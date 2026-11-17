@@ -178,7 +178,7 @@ export function AuraInstallCard() {
                 <li className="rounded-xl bg-[#1a2432] p-4"><strong className="text-[#55d6b2]">1　使用 Safari</strong><br /><span className="text-sm">若目前不是 Safari，請先以 Safari 開啟這個頁面。</span></li>
                 <li className="rounded-xl bg-[#1a2432] p-4"><strong className="text-[#55d6b2]">2　點選「分享」</strong><br /><span className="text-sm">點工具列的方框向上箭頭；若工具列隱藏，先輕點畫面。</span></li>
                 <li className="rounded-xl bg-[#1a2432] p-4"><strong className="text-[#55d6b2]">3　選「加入主畫面」</strong><br /><span className="text-sm">找不到時，向下滑動分享選單，或點「編輯動作」加入。</span></li>
-                <li className="rounded-xl bg-[#1a2432] p-4"><strong className="text-[#55d6b2]">4　點右上角「新增」</strong><br /><span className="text-sm">完成後，回到手機主畫面點 Aura EyeGym 圖示。</span></li>
+                <li className="rounded-xl bg-[#1a2432] p-4"><strong className="text-[#55d6b2]">4　點右上角「新增」</strong><br /><span className="text-sm">若畫面有「以 Web App 開啟」，請保持啟用；完成後回到主畫面點 Aura EyeGym 圖示。</span></li>
               </ol>
             ) : (
               <div className="space-y-3 text-[#d8e1ec]">

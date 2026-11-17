@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Aura EyeGym">
+  <defs>
+    <radialGradient id="background" cx="50%" cy="42%" r="72%">
+      <stop offset="0" stop-color="#203a42"/>
+      <stop offset="1" stop-color="#0f141e"/>
+    </radialGradient>
+    <radialGradient id="iris" cx="42%" cy="35%" r="65%">
+      <stop offset="0" stop-color="#fffdd0"/>
+      <stop offset="0.45" stop-color="#55d6b2"/>
+      <stop offset="1" stop-color="#00a985"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#background)"/>
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#55d6b2" stroke-opacity=".12" stroke-width="12"/>
+  <path d="M70 258c45-76 108-114 186-114s141 38 186 114c-45 73-108 110-186 110S115 331 70 258Z" fill="#fffdd0"/>
+  <path d="M92 258c42-56 97-84 164-84s122 28 164 84c-42 53-97 80-164 80S134 311 92 258Z" fill="#17232d"/>
+  <circle cx="256" cy="256" r="82" fill="url(#iris)"/>
+  <circle cx="256" cy="256" r="38" fill="#071615"/>
+  <circle cx="229" cy="225" r="17" fill="#fff" fill-opacity=".9"/>
+  <path d="M122 372c37 30 82 45 134 45s97-15 134-45" fill="none" stroke="#55d6b2" stroke-linecap="round" stroke-width="18"/>
+</svg>

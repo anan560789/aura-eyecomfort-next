@@ -6,6 +6,7 @@ import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
 import liff from '@line/liff';
 import { lineGatewayUrl, supabaseAnonKey } from '@/lib/supabase';
 import { useAuraLineLogin } from './aura-line-login';
+import { AuraInstallCard } from './aura-install';
 
 const LIFF_ID: string = (() => {
   const value = process.env.NEXT_PUBLIC_LIFF_ID;
@@ -1478,6 +1479,8 @@ export default function EyeComfortApp() {
               )}
               {lineLogin.message && <p className="mt-2 text-sm" role="status">{lineLogin.message}</p>}
             </div>
+
+            <AuraInstallCard />
 
             <div className="bg-[#162b2b] border border-[#00ffcc] rounded-lg p-3 mb-[30px] w-full max-w-[800px] text-center shadow-[0_0_10px_rgba(0,255,204,0.2)]">
               <p className="text-[#00ffcc] text-[14px] m-0 mb-1">🤖 邊緣運算自適應引擎啟動中</p>

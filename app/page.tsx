@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { VRButton } from 'three/examples/jsm/webxr/VRButton.js';
 import liff from '@line/liff';
 import { lineGatewayUrl, supabaseAnonKey } from '@/lib/supabase';
+import { useAuraLineLogin } from './aura-line-login';
 
 const LIFF_ID: string = (() => {
   const value = process.env.NEXT_PUBLIC_LIFF_ID;
@@ -131,8 +132,8 @@ export default function EyeComfortApp() {
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
   
-  const [isLiffReady, setIsLiffReady] = useState<boolean>(false);
-  const [lineProfile, setLineProfile] = useState({ uid: '未登入', name: '' });
+  const lineLogin = useAuraLineLogin();
+  const { profile: lineProfile, ready: isLiffReady } = lineLogin;
   
   const [uiState, setUiState] = useState<{ title: React.ReactNode, timer: React.ReactNode, position: 'BOTTOM' | 'CENTER', showContinue: boolean, showInput: boolean }>({ title: '', timer: '', position: 'BOTTOM', showContinue: false, showInput: false });
   const [calendarData, setCalendarData] = useState<{ todayCycles: number, monthCycles: number, days: number[], today: number, year: number, month: number }>({ todayCycles: 0, monthCycles: 0, days: [], today: 1, year: 2026, month: 1 });
@@ -804,7 +805,7 @@ export default function EyeComfortApp() {
     };
 
     try {
-      if (liff.isLoggedIn() && liff.isApiAvailable('shareTargetPicker')) {
+      if (!lineLogin.standalone && liff.isLoggedIn() && liff.isApiAvailable('shareTargetPicker')) {
         const res = await liff.shareTargetPicker([{ type: "text", text: textToShare }]);
         if (res) return; 
       }
@@ -819,42 +820,40 @@ export default function EyeComfortApp() {
   };
 
   useEffect(() => {
-    const initLiff = async () => { 
-      try { 
-        await liff.init({ liffId: LIFF_ID });
-        if (liff.isLoggedIn()) { 
-          const profile = await liff.getProfile(); 
-          setLineProfile({ uid: profile.userId, name: profile.displayName }); 
+    if (!isLiffReady || !lineProfile.uid || lineProfile.uid === '未登入') {
+      loadCalendarData();
+      return;
+    }
 
-          try {
-            const entitlement = await callLineGateway<EntitlementResponse | null>('entitlement');
-            if (entitlement?.ok) {
-              localStorage.setItem('aura_premium_unlocked', 'true');
-              localStorage.setItem('aura_clinic_id', entitlement.clinic_id);
-              localStorage.setItem('aura_entitlement_id', entitlement.redemption_id);
-              localStorage.setItem('aura_entitlement_level', entitlement.entitlement_level);
-              setIsPremiumUnlocked(true);
-            } else {
-              localStorage.removeItem('aura_premium_unlocked');
-              localStorage.removeItem('aura_entitlement_id');
-              localStorage.removeItem('aura_entitlement_level');
-              setIsPremiumUnlocked(false);
-            }
-          } catch (error) {
-            console.warn('無法確認授權狀態', error);
-          }
+    const refreshEntitlement = async () => {
+      // 已安裝的主畫面 App 使用經驗證的伺服器 Session 登入；兌換與雲端
+      // 寫入仍要求即時 LINE access token，避免只憑前端 UID 操作資料庫。
+      if (!liff.getAccessToken()) return;
 
-          await syncOfflineLogs();
-        } 
-      } catch (err) {
-        console.error('LIFF 初始化失敗', err);
-      } finally {
-        setIsLiffReady(true);
+      try {
+        const entitlement = await callLineGateway<EntitlementResponse | null>('entitlement');
+        if (entitlement?.ok) {
+          localStorage.setItem('aura_premium_unlocked', 'true');
+          localStorage.setItem('aura_clinic_id', entitlement.clinic_id);
+          localStorage.setItem('aura_entitlement_id', entitlement.redemption_id);
+          localStorage.setItem('aura_entitlement_level', entitlement.entitlement_level);
+          setIsPremiumUnlocked(true);
+        } else {
+          localStorage.removeItem('aura_premium_unlocked');
+          localStorage.removeItem('aura_entitlement_id');
+          localStorage.removeItem('aura_entitlement_level');
+          setIsPremiumUnlocked(false);
+        }
+      } catch (error) {
+        console.warn('無法確認授權狀態', error);
       }
+
+      await syncOfflineLogs();
     };
-    initLiff(); 
+
+    void refreshEntitlement();
     loadCalendarData();
-  }, [loadCalendarData, syncOfflineLogs]);
+  }, [isLiffReady, lineProfile.uid, loadCalendarData, syncOfflineLogs]);
 
   // ==========================================
   // Three.js 引擎與動畫
@@ -1439,11 +1438,35 @@ export default function EyeComfortApp() {
             <div className={`text-[20px] text-center leading-[1.5] mb-[20px] break-keep ${lineProfile.uid !== '未登入' ? 'text-[#00ffcc]' : 'text-[#8b9bb4]'}`}>
               {!isLiffReady ? (
                 <span className="text-[#8b9bb4] animate-pulse block my-[10px]">🔄 LINE 認證連線中...</span>
+              ) : lineLogin.browserLink ? (
+                lineLogin.approved ? (
+                  <p>LINE 帳號已連結。請回到主畫面，開啟 Aura EyeGym。</p>
+                ) : (
+                  <>
+                    <p>請核對主畫面 App 顯示的識別碼 <strong>{lineLogin.code}</strong>。</p>
+                    {lineProfile.uid === '未登入' ? (
+                      <button type="button" disabled={lineLogin.busy} onClick={lineLogin.login} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">🟢 使用 LINE 一鍵登入</button>
+                    ) : (
+                      <button type="button" onClick={lineLogin.approveDesktopLink} disabled={lineLogin.busy} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">以 {lineProfile.name} 的 LINE 帳號確認連結</button>
+                    )}
+                  </>
+                )
               ) : lineProfile.uid !== '未登入' ? (
                 `歡迎回來，${lineProfile.name}！請選擇您的專屬放鬆模組`
+              ) : lineLogin.standalone ? (
+                lineLogin.desktopLinkUrl ? (
+                  <>
+                    <p>連結識別碼 <strong>{lineLogin.code}</strong></p>
+                    <a href={lineLogin.desktopLinkUrl} target="_blank" rel="noopener noreferrer" className="inline-block mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">開啟 LINE 登入頁</a>
+                    <p className="mt-2 text-sm">在瀏覽器確認連結，再回到主畫面開啟 Aura EyeGym。</p>
+                  </>
+                ) : (
+                  <button type="button" onClick={lineLogin.beginDesktopLink} disabled={lineLogin.busy} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">連結 LINE 帳號</button>
+                )
               ) : (
-                <>請選擇您的專屬眼部放鬆與訓練模組<br /><button onClick={() => liff.login({ redirectUri: window.location.href })} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">🟢 使用 LINE 一鍵登入</button></>
+                <>請選擇您的專屬眼部放鬆與訓練模組<br /><button type="button" disabled={lineLogin.busy} onClick={lineLogin.login} className="mt-[15px] px-6 py-2.5 bg-[#06C755] text-white border-none rounded-full text-[18px] font-bold cursor-pointer shadow-[0_4px_10px_rgba(6,199,85,0.3)] hover:scale-105 transition-transform">🟢 使用 LINE 一鍵登入</button></>
               )}
+              {lineLogin.message && <p className="mt-2 text-sm" role="status">{lineLogin.message}</p>}
             </div>
 
             <div className="bg-[#162b2b] border border-[#00ffcc] rounded-lg p-3 mb-[30px] w-full max-w-[800px] text-center shadow-[0_0_10px_rgba(0,255,204,0.2)]">

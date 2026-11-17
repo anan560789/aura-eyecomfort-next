@@ -1,142 +1,183 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
-import { createClient } from '@supabase/supabase-js';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import type { User } from '@supabase/supabase-js';
 import { jsPDF } from 'jspdf';
 import html2canvas from 'html2canvas';
-
-// ==========================================
-// 1. Supabase 連線設定
-// ==========================================
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vttxlkquladnrnytyhpc.supabase.co';
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ0dHhsa3F1bGFkbnJueXR5aHBjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODY0MTYyMzIsImV4cCI6MjEwMTk5MjIzMn0.l_wLaECh2kgDQtMzcrvJcjc5091x4HvSgfF4rPE1cHM';
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-// ==========================================
-// 🚨 專利防護核心：後端 HMAC 數位簽章驗證引擎
-// ==========================================
-const AURA_SECRET_SALT = "AuraDTx_Patent_2026_Strict_Compliance_O2O";
-
-async function verifyHMAC(log: any) {
-  try {
-    const payloadForSignature = {
-      session_id: log.session_id,
-      sequence_id: log.sequence_id,
-      previous_hash: log.previous_hash,
-      line_uid: log.line_uid,
-      auth_code: log.auth_code,
-      clinic_id: log.clinic_id,
-      real_name: log.real_name,
-      device_info: {
-        os_platform: log.device_info?.os_platform,
-        screen_refresh_rate: log.device_info?.screen_refresh_rate
-      },
-      training_context: {
-        module_id: log.training_context?.module_id,
-        module_type: log.training_context?.module_type,
-        timestamp_start: log.training_context?.timestamp_start ? new Date(log.training_context.timestamp_start).toISOString() : '',
-        timestamp_end: log.training_context?.timestamp_end ? new Date(log.training_context.timestamp_end).toISOString() : ''
-      },
-      performance_metrics: {
-        is_completed: log.performance_metrics?.is_completed,
-        total_active_seconds: log.performance_metrics?.total_active_seconds,
-        pause_count: log.performance_metrics?.pause_count,
-        exit_node: log.performance_metrics?.exit_node
-      },
-      objective_metrics: {
-        blink_count: log.objective_metrics?.blink_count,
-        blink_rate_per_min: log.objective_metrics?.blink_rate_per_min,
-        relaxation_achieved: log.objective_metrics?.relaxation_achieved
-      },
-      state_machine_details: (log.state_machine_details && Object.keys(log.state_machine_details).length > 0) ? {
-        phase_1_left_eye: {
-          target_seconds: log.state_machine_details.phase_1_left_eye?.target_seconds,
-          actual_seconds: log.state_machine_details.phase_1_left_eye?.actual_seconds,
-          is_completed: log.state_machine_details.phase_1_left_eye?.is_completed
-        },
-        transition_interrupt: {
-          triggered: log.state_machine_details.transition_interrupt?.triggered,
-          pause_duration_seconds: log.state_machine_details.transition_interrupt?.pause_duration_seconds,
-          user_resumed: log.state_machine_details.transition_interrupt?.user_resumed
-        },
-        phase_2_right_eye: {
-          target_seconds: log.state_machine_details.phase_2_right_eye?.target_seconds,
-          actual_seconds: log.state_machine_details.phase_2_right_eye?.actual_seconds,
-          is_completed: log.state_machine_details.phase_2_right_eye?.is_completed
-        }
-      } : {},
-      created_at: log.created_at ? new Date(log.created_at).toISOString() : ''
-    };
-
-    const msgUint8 = new TextEncoder().encode(JSON.stringify(payloadForSignature) + AURA_SECRET_SALT);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    const expectedSignature = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-    
-    return expectedSignature === log.digital_signature;
-  } catch (err) {
-    return false;
-  }
-}
+import { supabase } from '@/lib/supabase';
 
 export default function ClinicDashboard() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [passcode, setPasscode] = useState('');
+  const [user, setUser] = useState<User | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [accessLabel, setAccessLabel] = useState('');
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
   
   const [logs, setLogs] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isPdfGenerating, setIsPdfGenerating] = useState(false);
-  const [stats, setStats] = useState({ total: 0, verified: 0, tampered: 0, totalSeconds: 0 });
+  const [stats, setStats] = useState({ total: 0, verified: 0, legacy: 0, tampered: 0, totalSeconds: 0 });
 
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedPatient, setSelectedPatient] = useState<{ uid: string, name: string } | null>(null);
   const [patientLogs, setPatientLogs] = useState<any[]>([]);
   const [isPatientLoading, setIsPatientLoading] = useState(false);
 
-  const handleLogin = () => {
-    if (passcode.trim() !== '') {
-      setIsAuthenticated(true);
-      fetchLogs();
-    } else {
-      alert('請輸入診所代碼');
-    }
-  };
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     setIsLoading(true);
     const { data, error } = await supabase
-      .from('training_logs')
+      .from('clinic_training_logs')
       .select('*')
-      .eq('clinic_id', passcode.trim().toUpperCase())
       .order('created_at', { ascending: false })
       .limit(300);
 
     if (error) {
       console.error('獲取資料失敗', error);
+      setAuthError('無法讀取診所資料，請確認帳號權限。');
       setIsLoading(false);
       return;
     }
 
     if (data) {
       let verifiedCount = 0;
+      let legacyCount = 0;
       let tamperedCount = 0;
       let seconds = 0;
 
-      const verifiedData = await Promise.all(data.map(async (log: any) => {
-        const isValid = await verifyHMAC(log);
-        if (isValid) {
-            verifiedCount++;
-            seconds += log.performance_metrics?.total_active_seconds || 0;
-        } else {
-            tamperedCount++;
-        }
-        return { ...log, isSignatureValid: isValid };
-      }));
+      const verifiedData = data.map((log: any) => {
+        const integrityStatus = log.integrity_status || 'LEGACY';
+        if (integrityStatus === 'VERIFIED') verifiedCount++;
+        else if (integrityStatus === 'LEGACY') legacyCount++;
+        else tamperedCount++;
 
-      setStats({ total: data.length, verified: verifiedCount, tampered: tamperedCount, totalSeconds: seconds });
+        if (integrityStatus !== 'TAMPERED') {
+          seconds += log.performance_metrics?.total_active_seconds || 0;
+        }
+
+        return {
+          ...log,
+          integrityStatus,
+          isLegacy: integrityStatus === 'LEGACY',
+          isSignatureValid: integrityStatus !== 'TAMPERED',
+        };
+      });
+
+      setStats({
+        total: data.length,
+        verified: verifiedCount,
+        legacy: legacyCount,
+        tampered: tamperedCount,
+        totalSeconds: seconds,
+      });
       setLogs(verifiedData);
     }
     setIsLoading(false);
+  }, []);
+
+  const loadAccessContext = useCallback(async (authenticatedUser: User) => {
+    const [adminResult, membershipResult] = await Promise.all([
+      supabase
+        .from('platform_admins')
+        .select('user_id')
+        .eq('user_id', authenticatedUser.id),
+      supabase
+        .from('clinic_members')
+        .select('clinic_id, role')
+        .eq('user_id', authenticatedUser.id)
+        .eq('is_active', true),
+    ]);
+
+    if (adminResult.error || membershipResult.error) {
+      throw adminResult.error || membershipResult.error;
+    }
+
+    const isPlatformAdmin = (adminResult.data?.length || 0) > 0;
+    const memberships = membershipResult.data || [];
+
+    if (!isPlatformAdmin && memberships.length === 0) {
+      await supabase.auth.signOut();
+      throw new Error('此帳號尚未被指派診所權限。');
+    }
+
+    setUser(authenticatedUser);
+    setAccessLabel(
+      isPlatformAdmin
+        ? '平台最高管理者｜可查看所有診所'
+        : memberships.map((item) => `${item.clinic_id} (${item.role})`).join('、'),
+    );
+    await fetchLogs();
+  }, [fetchLogs]);
+
+  useEffect(() => {
+    let active = true;
+
+    const restoreSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (!active) return;
+
+      if (data.session?.user) {
+        try {
+          await loadAccessContext(data.session.user);
+        } catch (error: any) {
+          setAuthError(error.message || '無法載入帳號權限。');
+        }
+      }
+      if (active) setIsAuthLoading(false);
+    };
+
+    restoreSession();
+
+    const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (!active) return;
+      if (event === 'SIGNED_OUT' || !session?.user) {
+        setUser(null);
+        setLogs([]);
+        setAccessLabel('');
+      }
+    });
+
+    return () => {
+      active = false;
+      listener.subscription.unsubscribe();
+    };
+  }, [loadAccessContext]);
+
+  const handleLogin = async () => {
+    if (!email.trim() || !password) {
+      setAuthError('請輸入 Email 與密碼。');
+      return;
+    }
+
+    setIsAuthLoading(true);
+    setAuthError('');
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (error || !data.user) {
+      setAuthError('登入失敗，請確認 Email、密碼及帳號權限。');
+      setIsAuthLoading(false);
+      return;
+    }
+
+    try {
+      await loadAccessContext(data.user);
+      setPassword('');
+    } catch (contextError: any) {
+      setAuthError(contextError.message || '此帳號沒有診所權限。');
+    } finally {
+      setIsAuthLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setLogs([]);
+    setSelectedDate(null);
+    setSelectedPatient(null);
   };
 
   // 第一層：將紀錄依照日期分群
@@ -155,6 +196,7 @@ export default function ClinicDashboard() {
         date,
         logs: dayLogs,
         tamperedCount: dayLogs.filter((l: any) => !l.isSignatureValid).length,
+        legacyCount: dayLogs.filter((l: any) => l.isLegacy).length,
         uniquePatients: new Set(dayLogs.map((l: any) => l.line_uid)).size,
         totalSeconds: dayLogs.reduce((sum: number, l: any) => sum + (l.performance_metrics?.total_active_seconds || 0), 0)
       };
@@ -178,10 +220,12 @@ export default function ClinicDashboard() {
           lastCompletionTime: log.created_at,
           auth_code: log.auth_code,
           isSignatureValid: true,
+          isLegacy: false,
         };
       }
       patientMap[uid].moduleCount += 1;
       if (!log.isSignatureValid) patientMap[uid].isSignatureValid = false;
+      if (log.isLegacy) patientMap[uid].isLegacy = true;
       if (new Date(log.created_at).getTime() > new Date(patientMap[uid].lastCompletionTime).getTime()) {
          patientMap[uid].lastCompletionTime = log.created_at;
       }
@@ -196,18 +240,21 @@ export default function ClinicDashboard() {
     setIsPatientLoading(true);
 
     const { data, error } = await supabase
-      .from('training_logs')
+      .from('clinic_training_logs')
       .select('*')
-      .eq('clinic_id', passcode.trim().toUpperCase())
-      .eq('line_uid', uid);
+      .eq('line_uid', uid)
+      .order('created_at', { ascending: false });
 
     if (data) {
-      const verifiedData = await Promise.all(data.map(async (log: any) => ({
+      const verifiedData = data.map((log: any) => ({
         ...log,
-        isSignatureValid: await verifyHMAC(log)
-      })));
+        integrityStatus: log.integrity_status || 'LEGACY',
+        isLegacy: (log.integrity_status || 'LEGACY') === 'LEGACY',
+        isSignatureValid: (log.integrity_status || 'LEGACY') !== 'TAMPERED',
+      }));
       setPatientLogs(verifiedData);
     }
+    if (error) console.error('無法讀取病患紀錄', error);
     setIsPatientLoading(false);
   };
 
@@ -269,24 +316,47 @@ export default function ClinicDashboard() {
     }
   };
 
-  if (!isAuthenticated) {
+  if (isAuthLoading && !user) {
+    return (
+      <div className="min-h-screen bg-[#0f141e] flex items-center justify-center text-[#00ffcc] font-bold">
+        正在確認安全登入狀態…
+      </div>
+    );
+  }
+
+  if (!user) {
     return (
       <div className="min-h-screen bg-[#0f141e] flex flex-col items-center justify-center p-5 font-sans">
         <div className="bg-[#1a2233] border-2 border-[#00ffcc] p-8 rounded-2xl w-full max-w-[400px] shadow-[0_0_30px_rgba(0,255,204,0.2)] text-center">
           <div className="text-[50px] mb-4">🏥</div>
           <h1 className="text-[#fffdd0] text-[24px] font-bold mb-2 tracking-wider">Aura EyeGym</h1>
           <h2 className="text-[#00ffcc] text-[18px] mb-6">診所端醫療稽核系統</h2>
-          <input 
-            type="password" 
-            placeholder="請輸入醫師授權碼" 
-            value={passcode}
-            onChange={(e) => setPasscode(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
-            className="w-full p-4 bg-[#0f141e] border border-[#2a3a5a] text-[#fffdd0] rounded-xl text-center text-[18px] mb-6 outline-none focus:border-[#00ffcc]"
+          <input
+            type="email"
+            autoComplete="username"
+            placeholder="診所帳號 Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full p-4 bg-[#0f141e] border border-[#2a3a5a] text-[#fffdd0] rounded-xl text-center text-[16px] mb-4 outline-none focus:border-[#00ffcc]"
           />
-          <button onClick={handleLogin} className="w-full py-4 bg-[#00ffcc] text-[#0f141e] font-bold rounded-xl text-[18px] shadow-[0_4px_15px_rgba(0,255,204,0.4)] transition-transform hover:scale-[1.02]">
-            登入系統
+          <input
+            type="password"
+            autoComplete="current-password"
+            placeholder="密碼"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+            className="w-full p-4 bg-[#0f141e] border border-[#2a3a5a] text-[#fffdd0] rounded-xl text-center text-[16px] mb-3 outline-none focus:border-[#00ffcc]"
+          />
+          {authError && <p className="text-[#ff8080] text-[14px] mb-4">{authError}</p>}
+          <button
+            onClick={handleLogin}
+            disabled={isAuthLoading}
+            className="w-full py-4 bg-[#00ffcc] disabled:opacity-50 text-[#0f141e] font-bold rounded-xl text-[18px] shadow-[0_4px_15px_rgba(0,255,204,0.4)] transition-transform hover:scale-[1.02]"
+          >
+            {isAuthLoading ? '登入中…' : '安全登入'}
           </button>
+          <p className="text-[#8b9bb4] text-[12px] mt-4">帳號由 Aura EyeGym 平台管理者建立，不開放自行註冊。</p>
         </div>
       </div>
     );
@@ -301,21 +371,33 @@ export default function ClinicDashboard() {
             <h1 className="text-[32px] font-bold text-[#00ffcc] flex items-center gap-3">
               <span>🏥</span> Aura EyeGym 醫療稽核儀表板
             </h1>
-            <p className="text-[#8b9bb4] text-[16px] mt-2">O2O 數位療法閉環｜全診所即時動態中心</p>
+            <p className="text-[#8b9bb4] text-[16px] mt-2">{accessLabel}</p>
+            <p className="text-[#66758c] text-[13px] mt-1">{user.email}</p>
           </div>
-          <button onClick={() => { setSelectedDate(null); fetchLogs(); }} className="mt-4 md:mt-0 px-6 py-3 bg-[#1a2233] border border-[#4D96FF] text-[#4D96FF] rounded-lg font-bold hover:bg-[#4D96FF] hover:text-white transition-colors flex items-center gap-2">
-            <span>🔄</span> 重新載入區塊鏈結
-          </button>
+          <div className="flex flex-wrap gap-3 mt-4 md:mt-0">
+            <button onClick={() => { setSelectedDate(null); fetchLogs(); }} className="px-5 py-3 bg-[#1a2233] border border-[#4D96FF] text-[#4D96FF] rounded-lg font-bold hover:bg-[#4D96FF] hover:text-white transition-colors flex items-center gap-2">
+              <span>🔄</span> 重新載入
+            </button>
+            <button onClick={handleLogout} className="px-5 py-3 bg-[#1a2233] border border-[#ff8080] text-[#ff8080] rounded-lg font-bold hover:bg-[#ff8080] hover:text-[#0f141e] transition-colors">
+              登出
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-10">
+        {authError && <div className="mb-5 rounded-lg border border-[#ff8080] bg-[#3a1a1a]/50 p-4 text-[#ffb0b0]">{authError}</div>}
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-5 mb-10">
           <div className="bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#4D96FF] shadow-lg">
             <h3 className="text-[#8b9bb4] text-[16px] mb-2">總接收紀錄</h3>
             <p className="text-[36px] font-bold text-white">{stats.total}</p>
           </div>
           <div className="bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#00ffcc] shadow-lg">
-            <h3 className="text-[#8b9bb4] text-[16px] mb-2">簽章驗證通過 (合規)</h3>
+            <h3 className="text-[#8b9bb4] text-[16px] mb-2">伺服器簽章通過</h3>
             <p className="text-[36px] font-bold text-[#00ffcc]">{stats.verified}</p>
+          </div>
+          <div className="bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#9b8cff] shadow-lg">
+            <h3 className="text-[#8b9bb4] text-[16px] mb-2">舊版測試紀錄</h3>
+            <p className="text-[36px] font-bold text-[#b7adff]">{stats.legacy}</p>
           </div>
           <div className="bg-[#1a2233] p-6 rounded-xl border-l-4 border-[#ff4d4d] shadow-lg">
             <h3 className="text-[#8b9bb4] text-[16px] mb-2">遭竄改攔截 (異常)</h3>
@@ -359,7 +441,13 @@ export default function ClinicDashboard() {
                         <td className="p-4 font-bold text-[#4D96FF]">{group.logs.length} 筆</td>
                         <td className="p-4 font-bold text-[#E5B55E]">{Math.floor(group.totalSeconds / 60)} 分 {group.totalSeconds % 60} 秒</td>
                         <td className="p-4">
-                          {group.tamperedCount === 0 ? <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#00ffcc]/10 text-[#00ffcc] rounded-full text-[13px] font-bold border border-[#00ffcc]/30">✅ 全數合規</span> : <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#ff4d4d]/10 text-[#ff4d4d] rounded-full text-[13px] font-bold border border-[#ff4d4d]/30">🚨 包含 {group.tamperedCount} 筆異常</span>}
+                          {group.tamperedCount > 0 ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#ff4d4d]/10 text-[#ff4d4d] rounded-full text-[13px] font-bold border border-[#ff4d4d]/30">🚨 包含 {group.tamperedCount} 筆異常</span>
+                          ) : group.legacyCount > 0 ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#9b8cff]/10 text-[#b7adff] rounded-full text-[13px] font-bold border border-[#9b8cff]/30">🗂️ 含 {group.legacyCount} 筆舊版測試資料</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#00ffcc]/10 text-[#00ffcc] rounded-full text-[13px] font-bold border border-[#00ffcc]/30">✅ 全數通過伺服器簽章</span>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -403,7 +491,13 @@ export default function ClinicDashboard() {
                     return (
                       <tr key={index} onClick={() => openPatientDetails(pat.line_uid, pat.real_name)} className={`hover:bg-[#2a3241] cursor-pointer transition-colors border-b border-[#2a3a5a]/50 ${!pat.isSignatureValid ? 'bg-[#3a1a1a]/40' : ''}`}>
                         <td className="p-4">
-                          {pat.isSignatureValid ? <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#00ffcc]/10 text-[#00ffcc] rounded-full text-[13px] font-bold border border-[#00ffcc]/30">✅ 合規</span> : <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#ff4d4d]/10 text-[#ff4d4d] rounded-full text-[13px] font-bold border border-[#ff4d4d]/30">🚨 竄改</span>}
+                          {!pat.isSignatureValid ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#ff4d4d]/10 text-[#ff4d4d] rounded-full text-[13px] font-bold border border-[#ff4d4d]/30">🚨 竄改</span>
+                          ) : pat.isLegacy ? (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#9b8cff]/10 text-[#b7adff] rounded-full text-[13px] font-bold border border-[#9b8cff]/30">🗂️ 舊版</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-3 py-1 bg-[#00ffcc]/10 text-[#00ffcc] rounded-full text-[13px] font-bold border border-[#00ffcc]/30">✅ 已驗證</span>
+                          )}
                         </td>
                         <td className="p-4 font-bold text-[#00ffcc] flex items-center gap-2">👤 {pat.real_name}</td>
                         <td className="p-4 font-bold text-[#E5B55E]">{pat.moduleCount} 模組</td>
@@ -478,7 +572,7 @@ export default function ClinicDashboard() {
                                 <td className="p-3 font-mono text-white">{log.performance_metrics?.total_active_seconds || 0} 秒</td>
                                 <td className="p-3 font-bold text-[#ff9f1c]">{pauseCount > 0 ? `${pauseCount} 次` : '-'}</td>
                                 <td className="p-3 font-bold text-[#4D96FF]">{log.objective_metrics?.blink_rate_per_min ? log.objective_metrics.blink_rate_per_min.toFixed(1) : 0} 次/分</td>
-                                <td className="p-3">{log.isSignatureValid ? <span className="text-[#00ffcc] font-bold text-[12px]">✅ 通過</span> : <span className="text-[#ff4d4d] font-bold text-[12px]">🚨 異常</span>}</td>
+                                <td className="p-3">{!log.isSignatureValid ? <span className="text-[#ff4d4d] font-bold text-[12px]">🚨 異常</span> : log.isLegacy ? <span className="text-[#b7adff] font-bold text-[12px]">🗂️ 舊版</span> : <span className="text-[#00ffcc] font-bold text-[12px]">✅ 通過</span>}</td>
                               </tr>
                             );
                           })
@@ -516,7 +610,7 @@ export default function ClinicDashboard() {
                   <td style={{ border: '1px solid black', padding: '10px' }}>{pat.real_name}</td>
                   <td style={{ border: '1px solid black', padding: '10px', textAlign: 'center' }}>{pat.moduleCount}</td>
                   <td style={{ border: '1px solid black', padding: '10px', textAlign: 'center' }}>{new Date(pat.lastCompletionTime).toLocaleTimeString('zh-TW', { hour12: false })}</td>
-                  <td style={{ border: '1px solid black', padding: '10px', textAlign: 'center' }}>{pat.isSignatureValid ? '合規' : '遭竄改'}</td>
+                  <td style={{ border: '1px solid black', padding: '10px', textAlign: 'center' }}>{!pat.isSignatureValid ? '遭竄改' : pat.isLegacy ? '舊版測試資料' : '伺服器簽章通過'}</td>
                 </tr>
               ))}
             </tbody>

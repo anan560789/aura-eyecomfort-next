@@ -33,6 +33,40 @@ const medicalPrinciples: Record<string, any> = {
   focus: { icon: "🎯", title: "Z 軸遠近對焦飛梭", color: "#FF3366", principle: "藉由引導睫狀肌在看近與看遠之間進行快速切換活動，作為維持水晶體調節靈活度與反應速度的日常練習。" }
 };
 
+const TRAINING_MODULE_IDS = ['sop', 'stretch', 'chaser', 'breathe', 'focus'] as const;
+type TrainingModuleId = (typeof TRAINING_MODULE_IDS)[number];
+type RecentModuleCompletions = Partial<Record<TrainingModuleId, number>>;
+
+const RECENT_MODULE_COMPLETIONS_KEY = 'aura_recent_module_completions_v1';
+const MODULE_COMPLETION_TTL_MS = 2 * 60 * 60 * 1000;
+
+function readRecentModuleCompletions(): RecentModuleCompletions {
+  try {
+    const raw = localStorage.getItem(RECENT_MODULE_COMPLETIONS_KEY);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+
+    const now = Date.now();
+    return TRAINING_MODULE_IDS.reduce<RecentModuleCompletions>((active, moduleId) => {
+      const completedAt = (parsed as Record<string, unknown>)[moduleId];
+      if (
+        typeof completedAt === 'number'
+        && Number.isFinite(completedAt)
+        && completedAt > 0
+        && completedAt <= now + 5 * 60 * 1000
+        && completedAt + MODULE_COMPLETION_TTL_MS > now
+      ) {
+        active[moduleId] = completedAt;
+      }
+      return active;
+    }, {});
+  } catch {
+    return {};
+  }
+}
+
 type TestResult = 'NORMAL' | 'ABNORMAL' | null;
 interface DiagnosticData { leftEye: TestResult; rightEye: TestResult; }
 
@@ -164,6 +198,7 @@ function useSafetyStateMachine(currentFaceState: string) {
 export default function EyeComfortApp() {
   const [currentView, setCurrentView] = useState<'DASHBOARD' | 'CALENDAR' | 'INFO_MODULES' | 'INFO_NUTRIENT' | 'INFO_RPE' | 'INFO_INTRO' | 'TRAINING' | 'TEST_REPORT'>('DASHBOARD');
   const [activeModule, setActiveModule] = useState<string | null>(null);
+  const [recentModuleCompletions, setRecentModuleCompletions] = useState<RecentModuleCompletions>({});
   
   const lineLogin = useAuraLineLogin();
   const { profile: lineProfile, ready: isLiffReady } = lineLogin;
@@ -245,6 +280,35 @@ export default function EyeComfortApp() {
     const unlocked = localStorage.getItem('aura_premium_unlocked') === 'true'
       && Boolean(localStorage.getItem('aura_entitlement_id'));
     setIsPremiumUnlocked(unlocked);
+  }, []);
+
+  useEffect(() => {
+    const refreshRecentModuleCompletions = () => {
+      const active = readRecentModuleCompletions();
+      localStorage.setItem(RECENT_MODULE_COMPLETIONS_KEY, JSON.stringify(active));
+      setRecentModuleCompletions(active);
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === RECENT_MODULE_COMPLETIONS_KEY) {
+        refreshRecentModuleCompletions();
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        refreshRecentModuleCompletions();
+      }
+    };
+
+    refreshRecentModuleCompletions();
+    const timer = window.setInterval(refreshRecentModuleCompletions, 30_000);
+    window.addEventListener('storage', handleStorage);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('storage', handleStorage);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, []);
 
   // 授權碼只能交由資料庫的原子兌換函式處理，前端不再保存完整授權碼。
@@ -773,6 +837,17 @@ export default function EyeComfortApp() {
 
   const recordModuleCompletion = (type: string) => {
     if (!['sop', 'stretch', 'chaser', 'breathe', 'focus', 'amsler', 'astigmatism'].includes(type)) return;
+
+    const moduleId = type as TrainingModuleId;
+    if (TRAINING_MODULE_IDS.includes(moduleId)) {
+      const next = {
+        ...readRecentModuleCompletions(),
+        [moduleId]: Date.now(),
+      };
+      localStorage.setItem(RECENT_MODULE_COMPLETIONS_KEY, JSON.stringify(next));
+      setRecentModuleCompletions(next);
+    }
+
     const today = getTodayString(); 
     const modulesKey = `rehab_modules_${today}`; 
     const cyclesKey = `rehab_cycles_${today}`;
@@ -1525,11 +1600,12 @@ export default function EyeComfortApp() {
               )}
               
               <div className="flex flex-col gap-5 w-full">
-                <ModuleCard title="🚀 45秒快速舒緩" desc="結合遠眺聚焦、隨機白球衝擊與深層閉眼潤滑。" color="#FF6B6B" onClick={() => handleModuleAccess('sop', true)} isLocked={!isPremiumUnlocked} />
-                <ModuleCard title="🔄 動態 3D 眼肌伸展" desc="引導眼球進行 ∞ 字型極限軌跡，強迫拉伸控制眼球的六條眼外肌。" color="#4D96FF" onClick={() => handleModuleAccess('stretch', true)} isLocked={!isPremiumUnlocked} />
-                <ModuleCard title="🎮 睫狀肌深空追光" desc="【放鬆遊戲】死盯流星飛向深空，強迫睫狀肌徹底看遠放鬆。" color="#6BCB77" onClick={() => handleModuleAccess('chaser', true)} isLocked={!isPremiumUnlocked} />
-                <ModuleCard title="🌌 星雲散焦與神經放鬆" desc="【深度冥想】釋放隧道視覺，同步 3D 粒子星雲進行共振呼吸。" color="#FFD93D" onClick={() => handleModuleAccess('breathe', true)} isLocked={!isPremiumUnlocked} />
-                <ModuleCard title="🎯 Z 軸遠近對焦飛梭" desc="高強度睫狀肌重訓！利用極端遠近切換，恢復眼球對焦彈性。" color="#FF3366" onClick={() => handleModuleAccess('focus', true)} isLocked={!isPremiumUnlocked} />
+                <p className="text-[#8b9bb4] text-[14px] text-center m-0 -mb-1">✅ 完成標記會在 2 小時後自動清除</p>
+                <ModuleCard number={1} isCompleted={Boolean(recentModuleCompletions.sop)} title="🚀 45秒快速舒緩" desc="結合遠眺聚焦、隨機白球衝擊與深層閉眼潤滑。" color="#FF6B6B" onClick={() => handleModuleAccess('sop', true)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard number={2} isCompleted={Boolean(recentModuleCompletions.stretch)} title="🔄 動態 3D 眼肌伸展" desc="引導眼球進行 ∞ 字型極限軌跡，強迫拉伸控制眼球的六條眼外肌。" color="#4D96FF" onClick={() => handleModuleAccess('stretch', true)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard number={3} isCompleted={Boolean(recentModuleCompletions.chaser)} title="🎮 睫狀肌深空追光" desc="【放鬆遊戲】死盯流星飛向深空，強迫睫狀肌徹底看遠放鬆。" color="#6BCB77" onClick={() => handleModuleAccess('chaser', true)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard number={4} isCompleted={Boolean(recentModuleCompletions.breathe)} title="🌌 星雲散焦與神經放鬆" desc="【深度冥想】釋放隧道視覺，同步 3D 粒子星雲進行共振呼吸。" color="#FFD93D" onClick={() => handleModuleAccess('breathe', true)} isLocked={!isPremiumUnlocked} />
+                <ModuleCard number={5} isCompleted={Boolean(recentModuleCompletions.focus)} title="🎯 Z 軸遠近對焦飛梭" desc="高強度睫狀肌重訓！利用極端遠近切換，恢復眼球對焦彈性。" color="#FF3366" onClick={() => handleModuleAccess('focus', true)} isLocked={!isPremiumUnlocked} />
                 <ModuleCard title="🔍 互動式黃斑部評估" desc="專利級數位化阿姆斯勒方格表，包含左右眼自適應風險運算。" color="#9D4EDD" onClick={() => handleModuleAccess('amsler', false)} isLocked={!isPremiumUnlocked} />
                 <ModuleCard title="👁️ 互動式散光軸向評估" desc="專利級數位化放射鐘測試，分析潛在散光導致之視覺疲勞。" color="#FF9F1C" onClick={() => handleModuleAccess('astigmatism', false)} isLocked={!isPremiumUnlocked} />
               </div>
@@ -1902,16 +1978,48 @@ export default function EyeComfortApp() {
   );
 }
 
-function ModuleCard({ title, desc, color, onClick, isLocked = false }: { title: string, desc: string, color: string, onClick: () => void, isLocked?: boolean }) {
+function ModuleCard({
+  title,
+  desc,
+  color,
+  onClick,
+  isLocked = false,
+  number,
+  isCompleted = false,
+}: {
+  title: string;
+  desc: string;
+  color: string;
+  onClick: () => void;
+  isLocked?: boolean;
+  number?: number;
+  isCompleted?: boolean;
+}) {
   return (
-    <div 
-      onClick={onClick} 
-      className={`relative bg-[#1a2233] rounded-xl p-[24px_20px] cursor-pointer w-full box-border transition-transform hover:scale-[1.01] ${isLocked ? 'opacity-60 grayscale-[50%]' : ''}`} 
+    <div
+      onClick={onClick}
+      className={`relative bg-[#1a2233] rounded-xl p-[24px_20px] cursor-pointer w-full box-border transition-transform hover:scale-[1.01] ${isLocked ? 'opacity-60 grayscale-[50%]' : ''}`}
       style={{ border: `2px solid ${color}` }}
     >
-      <div className="flex justify-between items-center mb-3">
-        <h3 className="text-[#fffdd0] text-[22px] font-bold m-0">{title}</h3>
-        {isLocked && <span className="text-[24px]">🔒</span>}
+      <div className="flex justify-between items-start gap-3 mb-3">
+        <h3 className="text-[#fffdd0] text-[22px] font-bold m-0 flex items-center gap-2.5 flex-wrap">
+          {number !== undefined && (
+            <span
+              className="inline-flex w-9 h-9 shrink-0 items-center justify-center rounded-full text-[#0f141e] text-[18px] font-black"
+              style={{ backgroundColor: color }}
+              aria-label={`第 ${number} 項`}
+            >
+              {number}
+            </span>
+          )}
+          {isCompleted && (
+            <span className="text-[24px] leading-none" role="img" aria-label="兩小時內已完成" title="兩小時內已完成">
+              ✅
+            </span>
+          )}
+          <span>{title}</span>
+        </h3>
+        {isLocked && <span className="text-[24px] shrink-0">🔒</span>}
       </div>
       <p className="text-[#8b9bb4] text-[16px] leading-[1.6] m-0">{desc}</p>
     </div>

@@ -10,16 +10,22 @@
   "theme_color": "#11161e",
   "icons": [
     {
-      "src": "/icon-192.png",
+      "src": "/icon-192-nyk.png",
       "type": "image/png",
       "sizes": "192x192",
       "purpose": "any"
     },
     {
-      "src": "/icon-512.png",
+      "src": "/icon-512-nyk.png",
       "type": "image/png",
       "sizes": "512x512",
       "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512-nyk.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "maskable"
     }
   ]
 }

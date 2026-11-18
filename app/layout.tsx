@@ -19,10 +19,13 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, title: "Aura EyeGym" },
   icons: {
     icon: [
-      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-      { url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+      { url: "/favicon-32-nyk.png", sizes: "32x32", type: "image/png" },
+      { url: "/icon-192-nyk.png", sizes: "192x192", type: "image/png" },
+      { url: "/icon-512-nyk.png", sizes: "512x512", type: "image/png" },
     ],
-    apple: [{ url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    apple: [
+      { url: "/apple-touch-icon-nyk.png", sizes: "180x180", type: "image/png" },
+    ],
   },
   openGraph: {
     title: "Aura EyeGym | 數位視覺復健中心",
